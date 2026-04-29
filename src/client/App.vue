@@ -7,8 +7,7 @@ import type {
   DirectoryListing,
   KeystrokeProposal,
   ServerEvent,
-  SessionResponse,
-  TerminalKeyToken
+  SessionResponse
 } from "@shared/protocol";
 import {
   browseDirectories,
@@ -21,8 +20,7 @@ import {
   resolveProposal,
   selectThread,
   stopThread,
-  transcribe,
-  updateProposal
+  transcribe
 } from "./api";
 import {
   DEFAULT_PEDAL_BINDINGS,
@@ -46,7 +44,6 @@ const whisperStatus = ref("Whisper idle");
 const threads = ref<CodexThreadSummary[]>([]);
 const activeThreadId = ref<string | undefined>();
 const proposals = ref<KeystrokeProposal[]>([]);
-const proposalEdits = reactive<Record<string, string>>({});
 const terminalElement = ref<HTMLDivElement | null>(null);
 const captureBinding = ref<keyof PedalBindings | undefined>();
 const qrHostInput = ref("");
@@ -76,18 +73,6 @@ const activeThread = computed(() => threads.value.find((thread) => thread.id ===
 const pendingProposals = computed(() =>
   proposals.value.filter((proposal) => proposal.status === "pending")
 );
-const specialKeyTokens = new Set<TerminalKeyToken>([
-  "<ENTER>",
-  "<ESC>",
-  "<TAB>",
-  "<BACKSPACE>",
-  "<CTRL_C>",
-  "<UP>",
-  "<DOWN>",
-  "<LEFT>",
-  "<RIGHT>"
-]);
-const specialKeyPattern = /<(?:ENTER|ESC|TAB|BACKSPACE|CTRL_C|UP|DOWN|LEFT|RIGHT)>/g;
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown, true);
@@ -427,7 +412,6 @@ async function stopSelectedThread(): Promise<void> {
 }
 
 async function approveProposal(proposal: KeystrokeProposal): Promise<void> {
-  await persistProposalEdit(proposal);
   const response = await resolveProposal(proposal.id, "approve");
   removeProposal(response.proposal.id);
 }
@@ -435,20 +419,6 @@ async function approveProposal(proposal: KeystrokeProposal): Promise<void> {
 async function rejectProposal(proposal: KeystrokeProposal): Promise<void> {
   const response = await resolveProposal(proposal.id, "reject");
   removeProposal(response.proposal.id);
-}
-
-async function persistProposalEdit(proposal: KeystrokeProposal): Promise<void> {
-  const edited = getProposalEdit(proposal);
-  if (edited === formatProposalEdit(proposal)) {
-    return;
-  }
-
-  const response = await updateProposal({
-    proposalId: proposal.id,
-    displayText: edited,
-    keystrokes: proposalEditToKeystrokes(proposal, edited)
-  });
-  upsertProposal(response.proposal);
 }
 
 function requestSnapshot(threadId: string): void {
@@ -636,11 +606,6 @@ function upsertProposal(proposal: KeystrokeProposal): void {
   }
 
   const index = proposals.value.findIndex((existing) => existing.id === proposal.id);
-  const existing = index >= 0 ? proposals.value[index] : undefined;
-  if (!existing || proposalChanged(existing, proposal) || proposalEdits[proposal.id] === undefined) {
-    proposalEdits[proposal.id] = formatProposalEdit(proposal);
-  }
-
   if (index >= 0) {
     proposals.value.splice(index, 1, proposal);
   } else {
@@ -653,78 +618,6 @@ function removeProposal(proposalId: string): void {
   if (index >= 0) {
     proposals.value.splice(index, 1);
   }
-  delete proposalEdits[proposalId];
-}
-
-function getProposalEdit(proposal: KeystrokeProposal): string {
-  return proposalEdits[proposal.id] ?? formatProposalEdit(proposal);
-}
-
-function setProposalEdit(proposalId: string, event: Event): void {
-  const target = event.target;
-  if (target instanceof HTMLTextAreaElement) {
-    proposalEdits[proposalId] = target.value;
-  }
-}
-
-function formatProposalEdit(proposal: KeystrokeProposal): string {
-  return proposal.keystrokes.length > 0 ? proposal.keystrokes.join("") : proposal.displayText;
-}
-
-function proposalEditToKeystrokes(
-  proposal: KeystrokeProposal,
-  edited: string
-): TerminalKeyToken[] {
-  const parsed = parseKeystrokeEditText(edited);
-  if (parsed.some(isSpecialKeyToken)) {
-    return parsed;
-  }
-
-  const trailingSpecials: TerminalKeyToken[] = [];
-  for (let index = proposal.keystrokes.length - 1; index >= 0; index -= 1) {
-    const token = proposal.keystrokes[index];
-    if (!isSpecialKeyToken(token)) {
-      break;
-    }
-    trailingSpecials.unshift(token);
-  }
-
-  if (!edited && trailingSpecials.length > 0) {
-    return trailingSpecials;
-  }
-
-  return [edited, ...trailingSpecials];
-}
-
-function parseKeystrokeEditText(value: string): TerminalKeyToken[] {
-  const tokens: TerminalKeyToken[] = [];
-  let lastIndex = 0;
-  for (const match of value.matchAll(specialKeyPattern)) {
-    if (match.index === undefined) {
-      continue;
-    }
-    if (match.index > lastIndex) {
-      tokens.push(value.slice(lastIndex, match.index));
-    }
-    tokens.push(match[0] as TerminalKeyToken);
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < value.length) {
-    tokens.push(value.slice(lastIndex));
-  }
-  return tokens.filter((token) => token !== "");
-}
-
-function isSpecialKeyToken(token: TerminalKeyToken): boolean {
-  return specialKeyTokens.has(token);
-}
-
-function proposalChanged(previous: KeystrokeProposal, next: KeystrokeProposal): boolean {
-  return (
-    previous.displayText !== next.displayText ||
-    previous.reason !== next.reason ||
-    previous.keystrokes.join("\u0000") !== next.keystrokes.join("\u0000")
-  );
 }
 
 function writeTerminal(data: string): void {
@@ -908,16 +801,8 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
             <strong>{{ proposal.threadName }}</strong>
             <span>{{ proposal.reason }}</span>
           </div>
-          <textarea
-            class="proposal-editor form-control"
-            rows="4"
-            :value="getProposalEdit(proposal)"
-            @input="setProposalEdit(proposal.id, $event)"
-          ></textarea>
+          <pre>{{ proposal.displayText || proposal.keystrokes.join(" ") }}</pre>
           <div class="proposal-actions">
-            <button class="btn btn-outline-light btn-sm" type="button" @click="persistProposalEdit(proposal)">
-              Save Edit
-            </button>
             <button class="btn btn-success btn-sm" type="button" @click="approveProposal(proposal)">
               <i class="bi bi-check-lg" aria-hidden="true"></i>
               Approve

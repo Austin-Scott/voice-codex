@@ -212,8 +212,7 @@ input {
   font-size: 0.82rem;
 }
 
-.proposal pre,
-.proposal-editor {
+.proposal pre {
   max-height: 120px;
   overflow: auto;
   margin: 0;
@@ -223,12 +222,6 @@ input {
   color: #e7eef2;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.proposal-editor {
-  min-height: 92px;
-  border-color: rgba(255, 255, 255, 0.14);
-  resize: vertical;
 }
 
 .proposal-actions,

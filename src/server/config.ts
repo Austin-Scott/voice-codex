@@ -22,13 +22,16 @@ export function loadConfig(): AppConfig {
   const rootDir = process.cwd();
   const certDir = process.env.VOICE_CODEX_CERT_DIR ?? path.join(rootDir, ".secrets", "certs");
   const workspaceRoot = path.resolve(process.env.VOICE_CODEX_DEFAULT_DIR ?? os.homedir());
+  const codexArgs = process.env.CODEX_ARGS
+    ? splitArgs(process.env.CODEX_ARGS)
+    : ["-c", "tui.animations=false"];
 
   return {
     rootDir,
     host: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? "3000"),
     codexBin: process.env.CODEX_BIN ?? "codex",
-    codexArgs: splitArgs(process.env.CODEX_ARGS ?? ""),
+    codexArgs,
     apiKeyPath:
       process.env.OPENAI_API_KEY_PATH ?? path.join(rootDir, ".secrets", "openai-api-key.txt"),
     certDir,

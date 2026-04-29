@@ -237,7 +237,11 @@ function resolveShellCommand(command: string, args: string[]): { file: string; a
 
 function quoteShellPart(value: string): string {
   if (process.platform === "win32") {
-    return `"${value.replace(/"/g, '\\"')}"`;
+    if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) {
+      return value;
+    }
+
+    return `"${value.replace(/"/g, '""')}"`;
   }
 
   return `'${value.replace(/'/g, "'\\''")}'`;
