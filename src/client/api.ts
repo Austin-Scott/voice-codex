@@ -1,4 +1,9 @@
-import type { CodexThreadSummary, KeystrokeProposal, SessionResponse } from "@shared/protocol";
+import type {
+  CodexThreadSummary,
+  DirectoryListing,
+  KeystrokeProposal,
+  SessionResponse
+} from "@shared/protocol";
 
 export async function getSession(pairHost?: string): Promise<SessionResponse> {
   const params = new URLSearchParams();
@@ -29,6 +34,26 @@ export async function createThread(input: {
   cwd: string;
 }): Promise<{ thread: CodexThreadSummary }> {
   return request("/api/threads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input)
+  });
+}
+
+export async function browseDirectories(path?: string): Promise<{ listing: DirectoryListing }> {
+  const params = new URLSearchParams();
+  if (path) {
+    params.set("path", path);
+  }
+
+  return request(`/api/fs/directories${params.size ? `?${params}` : ""}`);
+}
+
+export async function createDirectory(input: {
+  parentPath: string;
+  name: string;
+}): Promise<{ listing: DirectoryListing }> {
+  return request("/api/fs/directories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input)

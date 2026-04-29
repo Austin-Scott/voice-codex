@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 
 export interface AppConfig {
   rootDir: string;
@@ -14,11 +15,13 @@ export interface AppConfig {
   realtimeVoice: string;
   transcriptionModel: string;
   scrollbackLimit: number;
+  workspaceRoot: string;
 }
 
 export function loadConfig(): AppConfig {
   const rootDir = process.cwd();
   const certDir = process.env.VOICE_CODEX_CERT_DIR ?? path.join(rootDir, ".secrets", "certs");
+  const workspaceRoot = path.resolve(process.env.VOICE_CODEX_DEFAULT_DIR ?? os.homedir());
 
   return {
     rootDir,
@@ -34,7 +37,8 @@ export function loadConfig(): AppConfig {
     realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime",
     realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "marin",
     transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe",
-    scrollbackLimit: Number(process.env.VOICE_CODEX_SCROLLBACK_LIMIT ?? "200000")
+    scrollbackLimit: Number(process.env.VOICE_CODEX_SCROLLBACK_LIMIT ?? "200000"),
+    workspaceRoot
   };
 }
 

@@ -13,6 +13,12 @@ export interface PedalHandlers {
   onActionEsc: () => void;
 }
 
+export interface TouchPoint {
+  id: number;
+  x: number;
+  y: number;
+}
+
 export const DEFAULT_PEDAL_BINDINGS: PedalBindings = {
   agent: "F13",
   whisper: "F14",
@@ -135,4 +141,142 @@ export class PedalInput {
   private matches(code: string): boolean {
     return code === this.bindings.agent || code === this.bindings.whisper || code === this.bindings.action;
   }
+}
+
+export class TouchButtonInput {
+  private active:
+    | {
+        count: number;
+        center: { x: number; y: number };
+        canceled: boolean;
+        pttStarted: boolean;
+        timer?: ReturnType<typeof setTimeout>;
+      }
+    | undefined;
+  private actionGesture: TapDoubleHoldGesture;
+
+  constructor(
+    private readonly handlers: PedalHandlers,
+    private readonly options = { stationaryMs: 180, movementPx: 18 }
+  ) {
+    this.actionGesture = new TapDoubleHoldGesture(handlers.onActionEnter, handlers.onActionEsc);
+  }
+
+  start(points: TouchPoint[]): boolean {
+    this.cancel();
+    if (points.length < 1 || points.length > 3) {
+      return false;
+    }
+
+    const count = points.length;
+    this.active = {
+      count,
+      center: centerOf(points),
+      canceled: false,
+      pttStarted: false
+    };
+
+    if (count === 1 || count === 2) {
+      this.active.timer = setTimeout(() => {
+        if (!this.active || this.active.canceled || this.active.pttStarted) {
+          return;
+        }
+        this.active.pttStarted = true;
+        if (count === 1) {
+          this.handlers.onAgentDown();
+        } else {
+          this.handlers.onWhisperDown();
+        }
+      }, this.options.stationaryMs);
+    } else {
+      this.actionGesture.down();
+    }
+
+    return true;
+  }
+
+  move(points: TouchPoint[]): boolean {
+    if (!this.active) {
+      return false;
+    }
+
+    const distance = distanceBetween(this.active.center, centerOf(points));
+    if (distance > this.options.movementPx) {
+      this.cancel();
+      return false;
+    }
+
+    return this.active.pttStarted || this.active.count === 3;
+  }
+
+  end(): boolean {
+    if (!this.active) {
+      return false;
+    }
+
+    const active = this.active;
+    this.active = undefined;
+    if (active.timer) {
+      clearTimeout(active.timer);
+    }
+
+    if (active.canceled) {
+      return false;
+    }
+
+    if (active.count === 1 && active.pttStarted) {
+      this.handlers.onAgentUp();
+      return true;
+    }
+
+    if (active.count === 2 && active.pttStarted) {
+      this.handlers.onWhisperUp();
+      return true;
+    }
+
+    if (active.count === 3) {
+      this.actionGesture.up();
+      return true;
+    }
+
+    return false;
+  }
+
+  cancel(): void {
+    if (!this.active) {
+      return;
+    }
+
+    const active = this.active;
+    this.active = undefined;
+    active.canceled = true;
+    if (active.timer) {
+      clearTimeout(active.timer);
+    }
+
+    if (active.count === 1 && active.pttStarted) {
+      this.handlers.onAgentUp();
+    }
+
+    if (active.count === 2 && active.pttStarted) {
+      this.handlers.onWhisperUp();
+    }
+  }
+
+  dispose(): void {
+    this.cancel();
+    this.actionGesture.dispose();
+  }
+}
+
+function centerOf(points: TouchPoint[]): { x: number; y: number } {
+  const total = points.reduce(
+    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+    { x: 0, y: 0 }
+  );
+  return { x: total.x / points.length, y: total.y / points.length };
+}
+
+function distanceBetween(left: { x: number; y: number }, right: { x: number; y: number }): number {
+  return Math.hypot(left.x - right.x, left.y - right.y);
 }

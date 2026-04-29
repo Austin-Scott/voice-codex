@@ -1,5 +1,14 @@
 import type { CodexThreadSummary } from "@shared/protocol";
-import { createProposal, createRealtimeAnswer, readTerminal, resolveProposal, selectThread } from "./api";
+import {
+  browseDirectories,
+  createDirectory,
+  createProposal,
+  createRealtimeAnswer,
+  createThread,
+  readTerminal,
+  resolveProposal,
+  selectThread
+} from "./api";
 
 interface RealtimeEvent {
   type: string;
@@ -155,6 +164,26 @@ export class RealtimeVoiceAgent {
       const threadId = String(args.threadId);
       const response = await selectThread(threadId);
       this.toolsState.setActiveThread(threadId);
+      return response;
+    }
+
+    if (name === "browse_directories") {
+      return browseDirectories(typeof args.path === "string" ? args.path : undefined);
+    }
+
+    if (name === "create_directory") {
+      return createDirectory({
+        parentPath: String(args.parentPath ?? ""),
+        name: String(args.name ?? "")
+      });
+    }
+
+    if (name === "create_thread") {
+      const response = await createThread({
+        cwd: String(args.cwd ?? ""),
+        name: typeof args.name === "string" ? args.name : undefined
+      });
+      this.toolsState.setActiveThread(response.thread.id);
       return response;
     }
 

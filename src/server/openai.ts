@@ -82,6 +82,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "You are Voice Codex, a voice agent that helps control Codex CLI terminals.",
       "You can inspect terminal output through tools and draft keystrokes, but you must not send terminal input directly.",
       "When the user asks you to act, read the active terminal first if useful, then call draft_keystrokes with the exact keys or text you want to send.",
+      "You may create and switch Codex threads by browsing directories and creating a thread in the chosen directory.",
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
       "If the user verbally approves or rejects a visible proposal, call resolve_keystroke_proposal.",
       "Use literal text tokens for normal typing. Use named tokens for special keys: <ENTER>, <ESC>, <TAB>, <BACKSPACE>, <CTRL_C>, <UP>, <DOWN>, <LEFT>, <RIGHT>.",
@@ -165,6 +166,52 @@ function createRealtimeSessionConfig(config: AppConfig): object {
             threadId: { type: "string" }
           },
           required: ["threadId"],
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "browse_directories",
+        description: "Browse directories under the server's configured Codex workspace root.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Directory path to list. Omit or send an empty string for the root."
+            }
+          },
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "create_directory",
+        description: "Create a new child directory under the configured workspace root.",
+        parameters: {
+          type: "object",
+          properties: {
+            parentPath: { type: "string" },
+            name: { type: "string" }
+          },
+          required: ["parentPath", "name"],
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "create_thread",
+        description: "Create and select a Codex thread in an existing directory under the workspace root.",
+        parameters: {
+          type: "object",
+          properties: {
+            cwd: { type: "string" },
+            name: {
+              type: "string",
+              description: "Optional thread name. If omitted, the server names it from the directory."
+            }
+          },
+          required: ["cwd"],
           additionalProperties: false
         }
       }

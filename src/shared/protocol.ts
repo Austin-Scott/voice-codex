@@ -26,6 +26,18 @@ export interface SessionResponse {
   activeThreadId?: string;
 }
 
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface DirectoryListing {
+  root: string;
+  current: string;
+  parent?: string;
+  entries: DirectoryEntry[];
+}
+
 export type TerminalKeyToken =
   | "<ENTER>"
   | "<ESC>"

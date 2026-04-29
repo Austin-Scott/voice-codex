@@ -4,11 +4,14 @@ import { Terminal } from "@xterm/xterm";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import type {
   CodexThreadSummary,
+  DirectoryListing,
   KeystrokeProposal,
   ServerEvent,
   SessionResponse
 } from "@shared/protocol";
 import {
+  browseDirectories,
+  createDirectory,
   createThread,
   getSession,
   listThreads,
@@ -21,6 +24,8 @@ import {
 import {
   DEFAULT_PEDAL_BINDINGS,
   PedalInput,
+  TouchButtonInput,
+  type TouchPoint,
   type PedalBindings,
   type PedalHandlers
 } from "./pedal";
@@ -36,11 +41,14 @@ const whisperStatus = ref("Whisper idle");
 const threads = ref<CodexThreadSummary[]>([]);
 const activeThreadId = ref<string | undefined>();
 const proposals = ref<KeystrokeProposal[]>([]);
-const newThreadName = ref("");
-const newThreadCwd = ref(".");
 const terminalElement = ref<HTMLDivElement | null>(null);
 const captureBinding = ref<keyof PedalBindings | undefined>();
 const qrHostInput = ref("");
+const settingsOpen = ref(false);
+const folderPickerOpen = ref(false);
+const directoryListing = ref<DirectoryListing | undefined>();
+const newDirectoryName = ref("");
+const touchControlsEnabled = ref(loadTouchControlsEnabled());
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
 let socket: VoiceCodexSocket | undefined;
@@ -48,6 +56,7 @@ let terminal: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let pedal: PedalInput | undefined;
+let touchInput: TouchButtonInput | undefined;
 let voiceAgent: RealtimeVoiceAgent | undefined;
 let agentPressed = false;
 let whisperRecorder: MediaRecorder | undefined;
@@ -71,8 +80,13 @@ onBeforeUnmount(() => {
   window.removeEventListener("keyup", handleKeyUp, true);
   resizeObserver?.disconnect();
   pedal?.dispose();
+  touchInput?.dispose();
   voiceAgent?.disconnect();
   socket?.close();
+  terminalElement.value?.removeEventListener("touchstart", handleTouchStart);
+  terminalElement.value?.removeEventListener("touchmove", handleTouchMove);
+  terminalElement.value?.removeEventListener("touchend", handleTouchEnd);
+  terminalElement.value?.removeEventListener("touchcancel", handleTouchCancel);
 });
 
 async function loadSession(): Promise<void> {
@@ -120,6 +134,7 @@ async function initializeController(): Promise<void> {
   await refreshThreads();
   setupVoiceAgent();
   setupPedal();
+  setupTouchInput();
   connectSocket();
   await nextTick();
   setupTerminal();
@@ -169,6 +184,28 @@ function setupPedal(): void {
     onActionEsc: () => sendTerminal("\u001b")
   };
   pedal = new PedalInput({ ...bindings }, handlers);
+}
+
+function setupTouchInput(): void {
+  touchInput?.dispose();
+  touchInput = new TouchButtonInput({
+    onAgentDown: () => {
+      agentPressed = true;
+      void startAgentPushToTalk();
+    },
+    onAgentUp: () => {
+      agentPressed = false;
+      voiceAgent?.setListening(false);
+    },
+    onWhisperDown: () => {
+      void startWhisper();
+    },
+    onWhisperUp: () => {
+      void stopWhisper();
+    },
+    onActionEnter: () => sendTerminal("\r"),
+    onActionEsc: () => sendTerminal("\u001b")
+  });
 }
 
 function connectSocket(): void {
@@ -222,6 +259,10 @@ function setupTerminal(): void {
     }
   });
   resizeObserver.observe(terminalElement.value);
+  terminalElement.value.addEventListener("touchstart", handleTouchStart, { passive: false });
+  terminalElement.value.addEventListener("touchmove", handleTouchMove, { passive: false });
+  terminalElement.value.addEventListener("touchend", handleTouchEnd, { passive: false });
+  terminalElement.value.addEventListener("touchcancel", handleTouchCancel, { passive: false });
   fitAddon.fit();
 }
 
@@ -268,16 +309,54 @@ function handleServerEvent(event: ServerEvent): void {
 }
 
 async function createNewThread(): Promise<void> {
+  if (!directoryListing.value) {
+    return;
+  }
+
   try {
     errorMessage.value = "";
     const response = await createThread({
-      name: newThreadName.value,
-      cwd: newThreadCwd.value
+      cwd: directoryListing.value.current
     });
     upsertThread(response.thread);
     activeThreadId.value = response.thread.id;
     requestSnapshot(response.thread.id);
-    newThreadName.value = "";
+    folderPickerOpen.value = false;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function openFolderPicker(): Promise<void> {
+  folderPickerOpen.value = true;
+  if (!directoryListing.value) {
+    await loadDirectory();
+  }
+}
+
+async function loadDirectory(path?: string): Promise<void> {
+  try {
+    errorMessage.value = "";
+    const response = await browseDirectories(path);
+    directoryListing.value = response.listing;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function createFolder(): Promise<void> {
+  if (!directoryListing.value || !newDirectoryName.value.trim()) {
+    return;
+  }
+
+  try {
+    errorMessage.value = "";
+    const response = await createDirectory({
+      parentPath: directoryListing.value.current,
+      name: newDirectoryName.value
+    });
+    directoryListing.value = response.listing;
+    newDirectoryName.value = "";
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
   }
@@ -417,6 +496,41 @@ function handleKeyUp(event: KeyboardEvent): void {
   }
 }
 
+function handleTouchStart(event: TouchEvent): void {
+  if (!touchControlsEnabled.value || !touchInput) {
+    return;
+  }
+
+  const started = touchInput.start(toTouchPoints(event.touches));
+  if (started && event.touches.length === 3) {
+    event.preventDefault();
+  }
+}
+
+function handleTouchMove(event: TouchEvent): void {
+  if (!touchControlsEnabled.value || !touchInput) {
+    return;
+  }
+
+  if (touchInput.move(toTouchPoints(event.touches))) {
+    event.preventDefault();
+  }
+}
+
+function handleTouchEnd(event: TouchEvent): void {
+  if (!touchControlsEnabled.value || !touchInput) {
+    return;
+  }
+
+  if (event.touches.length === 0 && touchInput.end()) {
+    event.preventDefault();
+  }
+}
+
+function handleTouchCancel(): void {
+  touchInput?.cancel();
+}
+
 function upsertThread(thread: CodexThreadSummary): void {
   const index = threads.value.findIndex((existing) => existing.id === thread.id);
   if (index >= 0) {
@@ -452,6 +566,14 @@ function savePedalBindings(value: PedalBindings): void {
   window.localStorage.setItem("voice-codex-pedal-bindings", JSON.stringify(value));
 }
 
+function loadTouchControlsEnabled(): boolean {
+  return window.localStorage.getItem("voice-codex-touch-controls") !== "false";
+}
+
+function saveTouchControlsEnabled(): void {
+  window.localStorage.setItem("voice-codex-touch-controls", String(touchControlsEnabled.value));
+}
+
 function syncQrHostInput(): void {
   if (!session.value?.pairing.controllerUrl) {
     return;
@@ -462,6 +584,14 @@ function syncQrHostInput(): void {
   } catch {
     // Leave user input as-is if the URL cannot be parsed.
   }
+}
+
+function toTouchPoints(touches: TouchList): TouchPoint[] {
+  return Array.from(touches).map((touch) => ({
+    id: touch.identifier,
+    x: touch.clientX,
+    y: touch.clientY
+  }));
 }
 </script>
 
@@ -502,92 +632,36 @@ function syncQrHostInput(): void {
   </main>
 
   <main v-else class="app-shell">
-    <nav class="topbar">
-      <div>
-        <div class="brand">Voice Codex</div>
-        <div class="small text-secondary">
-          {{ statusMessage }} · WebSocket {{ wsStatus }} · {{ agentStatus }} · {{ whisperStatus }}
-        </div>
+    <nav class="topbar" aria-label="Codex threads">
+      <div class="thread-tabs">
+        <button
+          v-for="thread in threads"
+          :key="thread.id"
+          type="button"
+          class="thread-tab"
+          :class="{ active: thread.id === activeThreadId }"
+          @click="chooseThread(thread.id)"
+        >
+          <span>{{ thread.name }}</span>
+          <i v-if="thread.state === 'running'" class="bi bi-circle-fill" aria-hidden="true"></i>
+          <i v-else-if="thread.state === 'error'" class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
+        </button>
+        <span v-if="threads.length === 0" class="empty-tabs">No threads</span>
       </div>
-      <div class="d-flex gap-2">
-        <button class="btn btn-outline-light btn-sm" type="button" @click="stopSelectedThread">
-          <i class="bi bi-stop-fill" aria-hidden="true"></i>
-          Stop
+      <div class="topbar-actions">
+        <button class="icon-button" type="button" aria-label="New Codex thread" @click="openFolderPicker">
+          <i class="bi bi-plus-lg" aria-hidden="true"></i>
+        </button>
+        <button class="icon-button" type="button" aria-label="Settings" @click="settingsOpen = true">
+          <i class="bi bi-gear-fill" aria-hidden="true"></i>
         </button>
       </div>
     </nav>
 
-    <aside class="sidebar">
-      <section class="panel">
-        <h2 class="panel-title">Threads</h2>
-        <div class="thread-list">
-          <button
-            v-for="thread in threads"
-            :key="thread.id"
-            type="button"
-            class="thread-row"
-            :class="{ active: thread.id === activeThreadId }"
-            @click="chooseThread(thread.id)"
-          >
-            <span class="thread-name">{{ thread.name }}</span>
-            <span class="thread-state" :class="thread.state">{{ thread.state }}</span>
-            <span class="thread-cwd">{{ thread.cwd }}</span>
-          </button>
-        </div>
-        <form class="thread-form" @submit.prevent="createNewThread">
-          <input v-model="newThreadName" class="form-control" placeholder="Name" />
-          <input v-model="newThreadCwd" class="form-control" placeholder="Working directory" />
-          <button class="btn btn-primary w-100" type="submit">
-            <i class="bi bi-plus-lg" aria-hidden="true"></i>
-            New Codex Thread
-          </button>
-        </form>
-      </section>
-
-      <section class="panel">
-        <h2 class="panel-title">Pedal</h2>
-        <div class="binding-row">
-          <span>Agent PTT</span>
-          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'agent'">
-            {{ captureBinding === "agent" ? "Press key" : bindings.agent }}
-          </button>
-        </div>
-        <div class="binding-row">
-          <span>Whisper PTT</span>
-          <button
-            class="btn btn-outline-light btn-sm"
-            type="button"
-            @click="captureBinding = 'whisper'"
-          >
-            {{ captureBinding === "whisper" ? "Press key" : bindings.whisper }}
-          </button>
-        </div>
-        <div class="binding-row">
-          <span>Enter/Esc</span>
-          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'action'">
-            {{ captureBinding === "action" ? "Press key" : bindings.action }}
-          </button>
-        </div>
-      </section>
-    </aside>
-
-    <section class="terminal-area">
-      <div class="terminal-header">
-        <div>
-          <strong>{{ activeThread?.name ?? "No thread selected" }}</strong>
-          <span class="text-secondary ms-2">{{ activeThread?.cwd }}</span>
-        </div>
-        <div class="text-secondary small">{{ pendingProposals.length }} pending proposal(s)</div>
-      </div>
+    <section class="terminal-area" :aria-label="activeThread?.name ?? 'Codex terminal'">
       <div ref="terminalElement" class="terminal-container"></div>
-    </section>
 
-    <aside class="proposal-panel">
-      <section class="panel h-100">
-        <h2 class="panel-title">Keystroke Proposals</h2>
-        <div v-if="pendingProposals.length === 0" class="empty-state">
-          Proposed terminal input will appear here before it is sent.
-        </div>
+      <div v-if="pendingProposals.length > 0" class="proposal-overlay">
         <article v-for="proposal in pendingProposals" :key="proposal.id" class="proposal">
           <div class="proposal-meta">
             <strong>{{ proposal.threadName }}</strong>
@@ -605,8 +679,97 @@ function syncQrHostInput(): void {
             </button>
           </div>
         </article>
+      </div>
+    </section>
+
+    <div v-if="folderPickerOpen" class="modal-layer" role="dialog" aria-modal="true">
+      <section class="app-modal folder-modal">
+        <header class="modal-header-row">
+          <div>
+            <h2 class="modal-title">New Codex Thread</h2>
+            <p class="modal-subtitle">{{ directoryListing?.current }}</p>
+          </div>
+          <button class="icon-button" type="button" aria-label="Close" @click="folderPickerOpen = false">
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+          </button>
+        </header>
+
+        <div class="folder-actions">
+          <button
+            class="btn btn-outline-light btn-sm"
+            type="button"
+            :disabled="!directoryListing?.parent"
+            @click="directoryListing?.parent && loadDirectory(directoryListing.parent)"
+          >
+            <i class="bi bi-arrow-up" aria-hidden="true"></i>
+            Up
+          </button>
+          <button class="btn btn-primary btn-sm" type="button" :disabled="!directoryListing" @click="createNewThread">
+            Start Here
+          </button>
+        </div>
+
+        <div class="folder-list">
+          <button
+            v-for="entry in directoryListing?.entries ?? []"
+            :key="entry.path"
+            class="folder-row"
+            type="button"
+            @click="loadDirectory(entry.path)"
+          >
+            <i class="bi bi-folder-fill" aria-hidden="true"></i>
+            <span>{{ entry.name }}</span>
+          </button>
+          <div v-if="directoryListing && directoryListing.entries.length === 0" class="empty-state">
+            No child directories
+          </div>
+        </div>
+
+        <form class="new-folder-form" @submit.prevent="createFolder">
+          <input v-model="newDirectoryName" class="form-control" placeholder="New folder name" />
+          <button class="btn btn-outline-light" type="submit">Create</button>
+        </form>
       </section>
-    </aside>
+    </div>
+
+    <div v-if="settingsOpen" class="modal-layer" role="dialog" aria-modal="true">
+      <section class="app-modal settings-modal">
+        <header class="modal-header-row">
+          <h2 class="modal-title">Controls</h2>
+          <button class="icon-button" type="button" aria-label="Close" @click="settingsOpen = false">
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+          </button>
+        </header>
+
+        <div class="binding-row">
+          <span>Agent PTT</span>
+          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'agent'">
+            {{ captureBinding === "agent" ? "Press key" : bindings.agent }}
+          </button>
+        </div>
+        <div class="binding-row">
+          <span>Whisper PTT</span>
+          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'whisper'">
+            {{ captureBinding === "whisper" ? "Press key" : bindings.whisper }}
+          </button>
+        </div>
+        <div class="binding-row">
+          <span>Enter/Esc</span>
+          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'action'">
+            {{ captureBinding === "action" ? "Press key" : bindings.action }}
+          </button>
+        </div>
+        <label class="touch-toggle">
+          <span>Touch controls</span>
+          <input
+            v-model="touchControlsEnabled"
+            class="form-check-input"
+            type="checkbox"
+            @change="saveTouchControlsEnabled"
+          />
+        </label>
+      </section>
+    </div>
 
     <div v-if="errorMessage" class="toast-error alert alert-danger">
       {{ errorMessage }}

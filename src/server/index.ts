@@ -1,6 +1,5 @@
 import cookie from "cookie";
 import express, { type NextFunction, type Request, type Response } from "express";
-import fs from "node:fs";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +10,7 @@ import { createServer as createViteServer } from "vite";
 import type { ClientEvent, ServerEvent } from "../shared/protocol.js";
 import { certificatePaths, ensureCertificate } from "./certs.js";
 import { loadConfig } from "./config.js";
+import { assertExistingDirectory, createDirectory, listDirectories } from "./fsBrowser.js";
 import { normalizeKeystrokes } from "./keystrokes.js";
 import { createRealtimeAnswer, transcribeAudio } from "./openai.js";
 import { PairingManager, SESSION_COOKIE } from "./pairing.js";
@@ -95,19 +95,36 @@ app.get("/api/threads", requireController, (_req, res) => {
 });
 
 app.post("/api/threads", requireController, (req, res) => {
-  const cwd = path.resolve(config.rootDir, String(req.body?.cwd ?? "."));
-  if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
-    res.status(400).json({ error: "Working directory does not exist" });
-    return;
+  try {
+    const thread = createManagedThread(String(req.body?.cwd ?? config.workspaceRoot), req.body?.name);
+    res.status(201).json({ thread });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }
+});
 
-  const thread = threads.create({ name: req.body?.name, cwd });
-  broadcast({
-    type: "threads",
-    threads: threads.list(),
-    activeThreadId: threads.getActiveThreadId()
-  });
-  res.status(201).json({ thread });
+app.get("/api/fs/directories", requireController, (req, res) => {
+  try {
+    res.json({ listing: listDirectories(config.workspaceRoot, String(req.query.path ?? "")) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.post("/api/fs/directories", requireController, (req, res) => {
+  try {
+    res
+      .status(201)
+      .json({
+        listing: createDirectory(
+          config.workspaceRoot,
+          String(req.body?.parentPath ?? config.workspaceRoot),
+          String(req.body?.name ?? "")
+        )
+      });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 app.post("/api/threads/:id/select", requireController, (req, res) => {
@@ -313,7 +330,11 @@ function handleClientEvent(ws: WebSocket, raw: string): void {
   }
 
   if (event.type === "thread.create") {
-    threads.create({ name: event.name, cwd: path.resolve(config.rootDir, event.cwd) });
+    try {
+      createManagedThread(event.cwd, event.name);
+    } catch (error) {
+      send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
 
@@ -332,6 +353,33 @@ function requireController(req: Request, res: Response, next: NextFunction): voi
     return;
   }
   next();
+}
+
+function createManagedThread(cwdInput: string, nameInput?: unknown) {
+  const cwd = assertExistingDirectory(config.workspaceRoot, cwdInput);
+  const requestedName = typeof nameInput === "string" ? nameInput.trim() : "";
+  const baseName = requestedName || path.basename(cwd) || "Codex";
+  const thread = threads.create({ name: uniqueThreadName(baseName), cwd });
+  broadcast({
+    type: "threads",
+    threads: threads.list(),
+    activeThreadId: threads.getActiveThreadId()
+  });
+  return thread;
+}
+
+function uniqueThreadName(baseName: string): string {
+  const existing = new Set(threads.list().map((thread) => thread.name));
+  if (!existing.has(baseName)) {
+    return baseName;
+  }
+
+  for (let index = 2; ; index += 1) {
+    const candidate = `${baseName} (${index})`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
 }
 
 function getSessionId(req: Request): string | undefined {
