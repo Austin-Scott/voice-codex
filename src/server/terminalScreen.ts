@@ -12,10 +12,15 @@ export class TerminalScreen {
   private writeQueue: Promise<void> = Promise.resolve();
   private sequence = 0;
 
-  constructor(cols: number, rows: number) {
+  constructor(
+    cols: number,
+    rows: number,
+    private readonly frameScrollback = 250
+  ) {
     this.screen = new HeadlessTerminal({
       cols,
       rows,
+      scrollback: frameScrollback,
       allowProposedApi: true
     });
     this.serializer = new SerializeAddon();
@@ -70,7 +75,7 @@ export class TerminalScreen {
       sequence,
       cols: this.screen.cols,
       rows: this.screen.rows,
-      data: this.serializer.serialize({ scrollback: 0 }),
+      data: this.serializer.serialize({ scrollback: this.frameScrollback }),
       plainText: this.renderPlainText()
     };
   }

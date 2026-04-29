@@ -26,4 +26,17 @@ describe("TerminalScreen", () => {
     expect(firstFrame.sequence).toBe(1);
     expect(secondFrame.sequence).toBe(2);
   });
+
+  it("includes bounded scrollback in serialized frames", async () => {
+    const screen = new TerminalScreen(20, 3, 4);
+
+    for (let index = 0; index < 7; index += 1) {
+      await screen.write(`line-${index}\r\n`);
+    }
+    const frame = await screen.snapshot("thread-1");
+
+    expect(frame.data).toContain("line-2");
+    expect(frame.data).toContain("line-6");
+    expect(frame.data).not.toContain("line-0");
+  });
 });

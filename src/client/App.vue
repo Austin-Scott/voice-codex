@@ -254,6 +254,8 @@ function setupTerminal(): void {
   }
 
   terminal = new Terminal({
+    allowProposedApi: true,
+    scrollback: 300,
     cursorBlink: true,
     convertEol: false,
     fontFamily: "Cascadia Mono, Consolas, monospace",
@@ -350,7 +352,7 @@ async function createNewThread(): Promise<void> {
     });
     upsertThread(response.thread);
     activeThreadId.value = response.thread.id;
-    terminal?.reset();
+    clearTerminal();
     await loadThreadSnapshot(response.thread.id);
     folderPickerOpen.value = false;
   } catch (error) {
@@ -397,7 +399,7 @@ async function chooseThread(threadId: string): Promise<void> {
   try {
     await selectThread(threadId);
     activeThreadId.value = threadId;
-    terminal?.reset();
+    clearTerminal();
     await loadThreadSnapshot(threadId);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
@@ -450,8 +452,7 @@ function renderTerminalFrame(frame: TerminalFramePayload): void {
   }
 
   lastFrameSequences.set(frame.threadId, frame.sequence);
-  terminal?.reset();
-  writeTerminal(frame.data);
+  replaceTerminalContent(frame.data);
 }
 
 function sendTerminal(data: string): void {
@@ -638,6 +639,21 @@ function writeTerminal(data: string): void {
     return;
   }
   terminal.write(data, () => {
+    terminal?.scrollToBottom();
+  });
+}
+
+function clearTerminal(): void {
+  lastFrameSequences.delete(activeThreadId.value ?? "");
+  terminal?.write("\x1bc");
+}
+
+function replaceTerminalContent(data: string): void {
+  if (!terminal) {
+    return;
+  }
+
+  terminal.write(`\x1bc${data}`, () => {
     terminal?.scrollToBottom();
   });
 }
