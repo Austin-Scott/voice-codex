@@ -1,0 +1,43 @@
+{
+  "name": "voice-codex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/server/index.ts",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "node dist/server/index.js",
+    "check": "npm run build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@popperjs/core": "^2.11.8",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
+    "cookie": "^1.0.2",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "node-pty": "^1.0.0",
+    "qrcode": "^1.5.4",
+    "selfsigned": "^3.0.1",
+    "vite": "^7.1.12",
+    "vue": "^3.5.22",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.9.1",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "vue-tsc": "^3.1.1"
+  }
+}
