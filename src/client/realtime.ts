@@ -1,4 +1,4 @@
-import type { CodexThreadSummary } from "@shared/protocol";
+import type { CodexThreadSummary, DirectoryListing } from "@shared/protocol";
 import {
   browseDirectories,
   createDirectory,
@@ -7,7 +7,8 @@ import {
   createThread,
   readTerminal,
   resolveProposal,
-  selectThread
+  selectThread,
+  updateProposal
 } from "./api";
 
 interface RealtimeEvent {
@@ -28,6 +29,9 @@ interface RealtimeFunctionCall {
 export interface RealtimeToolsState {
   getThreads: () => { threads: CodexThreadSummary[]; activeThreadId?: string };
   setActiveThread: (threadId: string) => void;
+  showDirectoryListing: (listing: DirectoryListing) => void;
+  showFolderPicker: () => void;
+  hideFolderPicker: () => void;
 }
 
 export class RealtimeVoiceAgent {
@@ -166,6 +170,17 @@ export class RealtimeVoiceAgent {
       return { status: "pending", proposalId: response.proposal.id };
     }
 
+    if (name === "update_keystroke_proposal") {
+      return updateProposal({
+        proposalId: String(args.proposalId ?? ""),
+        keystrokes: Array.isArray(args.keystrokes)
+          ? args.keystrokes.map((item) => String(item))
+          : [String(args.keystrokes ?? args.displayText ?? "")],
+        displayText: String(args.displayText ?? ""),
+        reason: typeof args.reason === "string" ? args.reason : undefined
+      });
+    }
+
     if (name === "resolve_keystroke_proposal") {
       return resolveProposal(
         String(args.proposalId),
@@ -181,14 +196,20 @@ export class RealtimeVoiceAgent {
     }
 
     if (name === "browse_directories") {
-      return browseDirectories(typeof args.path === "string" ? args.path : undefined);
+      this.toolsState.showFolderPicker();
+      const response = await browseDirectories(typeof args.path === "string" ? args.path : undefined);
+      this.toolsState.showDirectoryListing(response.listing);
+      return response;
     }
 
     if (name === "create_directory") {
-      return createDirectory({
+      this.toolsState.showFolderPicker();
+      const response = await createDirectory({
         parentPath: String(args.parentPath ?? ""),
         name: String(args.name ?? "")
       });
+      this.toolsState.showDirectoryListing(response.listing);
+      return response;
     }
 
     if (name === "create_thread") {
@@ -197,6 +218,7 @@ export class RealtimeVoiceAgent {
         name: typeof args.name === "string" ? args.name : undefined
       });
       this.toolsState.setActiveThread(response.thread.id);
+      this.toolsState.hideFolderPicker();
       return response;
     }
 

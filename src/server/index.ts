@@ -153,17 +153,36 @@ app.post("/api/threads/:id/stop", requireController, (req, res) => {
   res.json({ thread });
 });
 
-app.get("/api/threads/:id/read", requireController, (req, res) => {
-  const lines = Number(req.query.lines ?? "80");
-  const threadId = String(req.params.id);
-  const text = threads.readPlain(threadId, Number.isFinite(lines) ? lines : 80);
-  if (text === undefined) {
-    res.status(404).json({ error: "Thread not found" });
-    return;
-  }
+app.get(
+  "/api/threads/:id/read",
+  requireController,
+  asyncHandler(async (req, res) => {
+    const lines = Number(req.query.lines ?? "80");
+    const threadId = String(req.params.id);
+    const text = await threads.readPlain(threadId, Number.isFinite(lines) ? lines : 80);
+    if (text === undefined) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
 
-  res.json({ threadId, text });
-});
+    res.json({ threadId, text });
+  })
+);
+
+app.get(
+  "/api/threads/:id/snapshot",
+  requireController,
+  asyncHandler(async (req, res) => {
+    const threadId = String(req.params.id);
+    const snapshot = await threads.getSnapshot(threadId);
+    if (!snapshot) {
+      res.status(404).json({ error: "Thread not found" });
+      return;
+    }
+
+    res.json({ threadId, data: snapshot.raw, plainText: snapshot.plain });
+  })
+);
 
 app.post("/api/proposals", requireController, (req, res) => {
   try {
@@ -186,6 +205,19 @@ app.post("/api/proposals/:id/resolve", requireController, (req, res) => {
     res.json({ proposal });
   } catch (error) {
     res.status(404).json({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+app.patch("/api/proposals/:id", requireController, (req, res) => {
+  try {
+    const proposal = proposals.update(String(req.params.id), {
+      keystrokes: normalizeKeystrokes(req.body?.keystrokes),
+      displayText: String(req.body?.displayText ?? ""),
+      reason: typeof req.body?.reason === "string" ? req.body.reason : undefined
+    });
+    res.json({ proposal });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -248,7 +280,9 @@ wss.on("connection", (ws) => {
   }
 
   ws.on("message", (raw) => {
-    handleClientEvent(ws, raw.toString());
+    handleClientEvent(ws, raw.toString()).catch((error: unknown) => {
+      send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });
+    });
   });
 
   ws.on("close", () => {
@@ -280,6 +314,10 @@ proposals.on("resolved", (proposal) => {
   broadcast({ type: "proposal.resolved", proposal });
 });
 
+proposals.on("updated", (proposal) => {
+  broadcast({ type: "proposal.updated", proposal });
+});
+
 server.listen(config.port, config.host, () => {
   const qrDisplayUrl = getQrDisplayUrl(config.port);
   const localControllerUrl = getLocalControllerUrl(config.port);
@@ -289,7 +327,7 @@ server.listen(config.port, config.host, () => {
   console.log(`Pair local browser immediately: ${localControllerUrl}`);
 });
 
-function handleClientEvent(ws: WebSocket, raw: string): void {
+async function handleClientEvent(ws: WebSocket, raw: string): Promise<void> {
   let event: ClientEvent;
   try {
     event = JSON.parse(raw) as ClientEvent;
@@ -317,7 +355,7 @@ function handleClientEvent(ws: WebSocket, raw: string): void {
       return;
     }
 
-    const snapshot = threads.getSnapshot(event.threadId);
+    const snapshot = await threads.getSnapshot(event.threadId);
     if (snapshot) {
       send(ws, {
         type: "terminal.snapshot",
@@ -341,6 +379,17 @@ function handleClientEvent(ws: WebSocket, raw: string): void {
   if (event.type === "proposal.approve" || event.type === "proposal.reject") {
     try {
       proposals.resolve(event.proposalId, event.type === "proposal.approve" ? "approve" : "reject");
+    } catch (error) {
+      send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (event.type === "proposal.update") {
+    try {
+      proposals.update(event.proposalId, {
+        displayText: event.displayText,
+        keystrokes: event.keystrokes
+      });
     } catch (error) {
       send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });
     }

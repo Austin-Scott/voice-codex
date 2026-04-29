@@ -7,19 +7,22 @@ import type {
   DirectoryListing,
   KeystrokeProposal,
   ServerEvent,
-  SessionResponse
+  SessionResponse,
+  TerminalKeyToken
 } from "@shared/protocol";
 import {
   browseDirectories,
   createDirectory,
   createThread,
+  getTerminalSnapshot,
   getSession,
   listThreads,
   pair,
   resolveProposal,
   selectThread,
   stopThread,
-  transcribe
+  transcribe,
+  updateProposal
 } from "./api";
 import {
   DEFAULT_PEDAL_BINDINGS,
@@ -43,6 +46,7 @@ const whisperStatus = ref("Whisper idle");
 const threads = ref<CodexThreadSummary[]>([]);
 const activeThreadId = ref<string | undefined>();
 const proposals = ref<KeystrokeProposal[]>([]);
+const proposalEdits = reactive<Record<string, string>>({});
 const terminalElement = ref<HTMLDivElement | null>(null);
 const captureBinding = ref<keyof PedalBindings | undefined>();
 const qrHostInput = ref("");
@@ -72,6 +76,18 @@ const activeThread = computed(() => threads.value.find((thread) => thread.id ===
 const pendingProposals = computed(() =>
   proposals.value.filter((proposal) => proposal.status === "pending")
 );
+const specialKeyTokens = new Set<TerminalKeyToken>([
+  "<ENTER>",
+  "<ESC>",
+  "<TAB>",
+  "<BACKSPACE>",
+  "<CTRL_C>",
+  "<UP>",
+  "<DOWN>",
+  "<LEFT>",
+  "<RIGHT>"
+]);
+const specialKeyPattern = /<(?:ENTER|ESC|TAB|BACKSPACE|CTRL_C|UP|DOWN|LEFT|RIGHT)>/g;
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown, true);
@@ -158,7 +174,17 @@ function setupVoiceAgent(): void {
       getThreads: () => ({ threads: threads.value, activeThreadId: activeThreadId.value }),
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
-        requestSnapshot(threadId);
+        void loadThreadSnapshot(threadId);
+      },
+      showDirectoryListing: (listing) => {
+        directoryListing.value = listing;
+        folderPickerOpen.value = true;
+      },
+      showFolderPicker: () => {
+        folderPickerOpen.value = true;
+      },
+      hideFolderPicker: () => {
+        folderPickerOpen.value = false;
       }
     },
     (status) => {
@@ -224,7 +250,7 @@ function connectSocket(): void {
     (status) => {
       wsStatus.value = status;
       if (status === "open" && activeThreadId.value) {
-        requestSnapshot(activeThreadId.value);
+        void loadThreadSnapshot(activeThreadId.value);
       }
     },
     (message) => {
@@ -278,7 +304,10 @@ function setupTerminal(): void {
 function handleServerEvent(event: ServerEvent): void {
   if (event.type === "threads") {
     threads.value = event.threads;
-    activeThreadId.value = event.activeThreadId;
+    const localSelectionStillExists = event.threads.some((thread) => thread.id === activeThreadId.value);
+    if (!localSelectionStillExists) {
+      activeThreadId.value = event.activeThreadId;
+    }
     return;
   }
 
@@ -296,13 +325,17 @@ function handleServerEvent(event: ServerEvent): void {
 
   if (event.type === "terminal.snapshot") {
     if (event.threadId === activeThreadId.value) {
-      terminal?.reset();
-      writeTerminal(event.data);
+      renderTerminalSnapshot(event.data);
     }
     return;
   }
 
   if (event.type === "proposal.created") {
+    upsertProposal(event.proposal);
+    return;
+  }
+
+  if (event.type === "proposal.updated") {
     upsertProposal(event.proposal);
     return;
   }
@@ -329,7 +362,7 @@ async function createNewThread(): Promise<void> {
     });
     upsertThread(response.thread);
     activeThreadId.value = response.thread.id;
-    requestSnapshot(response.thread.id);
+    await loadThreadSnapshot(response.thread.id);
     folderPickerOpen.value = false;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
@@ -375,7 +408,7 @@ async function chooseThread(threadId: string): Promise<void> {
   try {
     await selectThread(threadId);
     activeThreadId.value = threadId;
-    requestSnapshot(threadId);
+    await loadThreadSnapshot(threadId);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
   }
@@ -394,6 +427,7 @@ async function stopSelectedThread(): Promise<void> {
 }
 
 async function approveProposal(proposal: KeystrokeProposal): Promise<void> {
+  await persistProposalEdit(proposal);
   const response = await resolveProposal(proposal.id, "approve");
   removeProposal(response.proposal.id);
 }
@@ -403,8 +437,38 @@ async function rejectProposal(proposal: KeystrokeProposal): Promise<void> {
   removeProposal(response.proposal.id);
 }
 
+async function persistProposalEdit(proposal: KeystrokeProposal): Promise<void> {
+  const edited = getProposalEdit(proposal);
+  if (edited === formatProposalEdit(proposal)) {
+    return;
+  }
+
+  const response = await updateProposal({
+    proposalId: proposal.id,
+    displayText: edited,
+    keystrokes: proposalEditToKeystrokes(proposal, edited)
+  });
+  upsertProposal(response.proposal);
+}
+
 function requestSnapshot(threadId: string): void {
   socket?.send({ type: "thread.select", threadId });
+}
+
+async function loadThreadSnapshot(threadId: string): Promise<void> {
+  try {
+    const snapshot = await getTerminalSnapshot(threadId);
+    if (snapshot.threadId === activeThreadId.value) {
+      renderTerminalSnapshot(snapshot.data);
+    }
+  } catch {
+    requestSnapshot(threadId);
+  }
+}
+
+function renderTerminalSnapshot(data: string): void {
+  terminal?.reset();
+  writeTerminal(data);
 }
 
 function sendTerminal(data: string): void {
@@ -572,6 +636,11 @@ function upsertProposal(proposal: KeystrokeProposal): void {
   }
 
   const index = proposals.value.findIndex((existing) => existing.id === proposal.id);
+  const existing = index >= 0 ? proposals.value[index] : undefined;
+  if (!existing || proposalChanged(existing, proposal) || proposalEdits[proposal.id] === undefined) {
+    proposalEdits[proposal.id] = formatProposalEdit(proposal);
+  }
+
   if (index >= 0) {
     proposals.value.splice(index, 1, proposal);
   } else {
@@ -584,6 +653,78 @@ function removeProposal(proposalId: string): void {
   if (index >= 0) {
     proposals.value.splice(index, 1);
   }
+  delete proposalEdits[proposalId];
+}
+
+function getProposalEdit(proposal: KeystrokeProposal): string {
+  return proposalEdits[proposal.id] ?? formatProposalEdit(proposal);
+}
+
+function setProposalEdit(proposalId: string, event: Event): void {
+  const target = event.target;
+  if (target instanceof HTMLTextAreaElement) {
+    proposalEdits[proposalId] = target.value;
+  }
+}
+
+function formatProposalEdit(proposal: KeystrokeProposal): string {
+  return proposal.keystrokes.length > 0 ? proposal.keystrokes.join("") : proposal.displayText;
+}
+
+function proposalEditToKeystrokes(
+  proposal: KeystrokeProposal,
+  edited: string
+): TerminalKeyToken[] {
+  const parsed = parseKeystrokeEditText(edited);
+  if (parsed.some(isSpecialKeyToken)) {
+    return parsed;
+  }
+
+  const trailingSpecials: TerminalKeyToken[] = [];
+  for (let index = proposal.keystrokes.length - 1; index >= 0; index -= 1) {
+    const token = proposal.keystrokes[index];
+    if (!isSpecialKeyToken(token)) {
+      break;
+    }
+    trailingSpecials.unshift(token);
+  }
+
+  if (!edited && trailingSpecials.length > 0) {
+    return trailingSpecials;
+  }
+
+  return [edited, ...trailingSpecials];
+}
+
+function parseKeystrokeEditText(value: string): TerminalKeyToken[] {
+  const tokens: TerminalKeyToken[] = [];
+  let lastIndex = 0;
+  for (const match of value.matchAll(specialKeyPattern)) {
+    if (match.index === undefined) {
+      continue;
+    }
+    if (match.index > lastIndex) {
+      tokens.push(value.slice(lastIndex, match.index));
+    }
+    tokens.push(match[0] as TerminalKeyToken);
+    lastIndex = match.index + match[0].length;
+  }
+  if (lastIndex < value.length) {
+    tokens.push(value.slice(lastIndex));
+  }
+  return tokens.filter((token) => token !== "");
+}
+
+function isSpecialKeyToken(token: TerminalKeyToken): boolean {
+  return specialKeyTokens.has(token);
+}
+
+function proposalChanged(previous: KeystrokeProposal, next: KeystrokeProposal): boolean {
+  return (
+    previous.displayText !== next.displayText ||
+    previous.reason !== next.reason ||
+    previous.keystrokes.join("\u0000") !== next.keystrokes.join("\u0000")
+  );
 }
 
 function writeTerminal(data: string): void {
@@ -767,8 +908,16 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
             <strong>{{ proposal.threadName }}</strong>
             <span>{{ proposal.reason }}</span>
           </div>
-          <pre>{{ proposal.displayText || proposal.keystrokes.join(" ") }}</pre>
+          <textarea
+            class="proposal-editor form-control"
+            rows="4"
+            :value="getProposalEdit(proposal)"
+            @input="setProposalEdit(proposal.id, $event)"
+          ></textarea>
           <div class="proposal-actions">
+            <button class="btn btn-outline-light btn-sm" type="button" @click="persistProposalEdit(proposal)">
+              Save Edit
+            </button>
             <button class="btn btn-success btn-sm" type="button" @click="approveProposal(proposal)">
               <i class="bi bi-check-lg" aria-hidden="true"></i>
               Approve
@@ -841,75 +990,77 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
           </button>
         </header>
 
-        <div class="binding-row">
-          <span>Agent PTT</span>
-          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'agent'">
-            {{ captureBinding === "agent" ? "Press key" : bindings.agent }}
+        <div class="modal-scroll-body">
+          <div class="binding-row">
+            <span>Agent PTT</span>
+            <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'agent'">
+              {{ captureBinding === "agent" ? "Press key" : bindings.agent }}
+            </button>
+          </div>
+          <div class="binding-row">
+            <span>Whisper PTT</span>
+            <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'whisper'">
+              {{ captureBinding === "whisper" ? "Press key" : bindings.whisper }}
+            </button>
+          </div>
+          <div class="binding-row">
+            <span>Enter/Esc</span>
+            <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'action'">
+              {{ captureBinding === "action" ? "Press key" : bindings.action }}
+            </button>
+          </div>
+          <label class="touch-toggle">
+            <span>Touch controls</span>
+            <input
+              v-model="touchControlsEnabled"
+              class="form-check-input"
+              type="checkbox"
+              @change="saveTouchControlsEnabled"
+            />
+          </label>
+          <button class="btn btn-outline-light w-100" type="button" @click="toggleFullscreen">
+            <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+            {{ fullscreenActive ? "Exit Fullscreen" : "Enter Fullscreen" }}
           </button>
-        </div>
-        <div class="binding-row">
-          <span>Whisper PTT</span>
-          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'whisper'">
-            {{ captureBinding === "whisper" ? "Press key" : bindings.whisper }}
-          </button>
-        </div>
-        <div class="binding-row">
-          <span>Enter/Esc</span>
-          <button class="btn btn-outline-light btn-sm" type="button" @click="captureBinding = 'action'">
-            {{ captureBinding === "action" ? "Press key" : bindings.action }}
-          </button>
-        </div>
-        <label class="touch-toggle">
-          <span>Touch controls</span>
-          <input
-            v-model="touchControlsEnabled"
-            class="form-check-input"
-            type="checkbox"
-            @change="saveTouchControlsEnabled"
-          />
-        </label>
-        <button class="btn btn-outline-light w-100" type="button" @click="toggleFullscreen">
-          <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
-          {{ fullscreenActive ? "Exit Fullscreen" : "Enter Fullscreen" }}
-        </button>
-        <div class="touch-map-row">
-          <label for="touch-agent">Agent PTT</label>
-          <select
-            id="touch-agent"
-            class="form-select form-select-sm"
-            :value="touchMappings.agent"
-            @change="onTouchMappingChange('agent', $event)"
-          >
-            <option value="1">1 finger</option>
-            <option value="2">2 fingers</option>
-            <option value="3">3 fingers</option>
-          </select>
-        </div>
-        <div class="touch-map-row">
-          <label for="touch-whisper">Whisper PTT</label>
-          <select
-            id="touch-whisper"
-            class="form-select form-select-sm"
-            :value="touchMappings.whisper"
-            @change="onTouchMappingChange('whisper', $event)"
-          >
-            <option value="1">1 finger</option>
-            <option value="2">2 fingers</option>
-            <option value="3">3 fingers</option>
-          </select>
-        </div>
-        <div class="touch-map-row">
-          <label for="touch-action">Enter/Esc</label>
-          <select
-            id="touch-action"
-            class="form-select form-select-sm"
-            :value="touchMappings.action"
-            @change="onTouchMappingChange('action', $event)"
-          >
-            <option value="1">1 finger</option>
-            <option value="2">2 fingers</option>
-            <option value="3">3 fingers</option>
-          </select>
+          <div class="touch-map-row">
+            <label for="touch-agent">Agent PTT</label>
+            <select
+              id="touch-agent"
+              class="form-select form-select-sm"
+              :value="touchMappings.agent"
+              @change="onTouchMappingChange('agent', $event)"
+            >
+              <option value="1">1 finger</option>
+              <option value="2">2 fingers</option>
+              <option value="3">3 fingers</option>
+            </select>
+          </div>
+          <div class="touch-map-row">
+            <label for="touch-whisper">Whisper PTT</label>
+            <select
+              id="touch-whisper"
+              class="form-select form-select-sm"
+              :value="touchMappings.whisper"
+              @change="onTouchMappingChange('whisper', $event)"
+            >
+              <option value="1">1 finger</option>
+              <option value="2">2 fingers</option>
+              <option value="3">3 fingers</option>
+            </select>
+          </div>
+          <div class="touch-map-row">
+            <label for="touch-action">Enter/Esc</label>
+            <select
+              id="touch-action"
+              class="form-select form-select-sm"
+              :value="touchMappings.action"
+              @change="onTouchMappingChange('action', $event)"
+            >
+              <option value="1">1 finger</option>
+              <option value="2">2 fingers</option>
+              <option value="3">3 fingers</option>
+            </select>
+          </div>
         </div>
       </section>
     </div>

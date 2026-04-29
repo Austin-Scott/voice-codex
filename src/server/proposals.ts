@@ -74,6 +74,33 @@ export class ProposalManager extends EventEmitter {
     return proposal;
   }
 
+  update(
+    id: string,
+    input: {
+      keystrokes: TerminalKeyToken[];
+      displayText: string;
+      reason?: string;
+    }
+  ): KeystrokeProposal {
+    const proposal = this.proposals.get(id);
+    if (!proposal) {
+      throw new Error("Unknown proposal");
+    }
+
+    if (proposal.status !== "pending") {
+      throw new Error("Cannot edit a resolved proposal");
+    }
+
+    proposal.keystrokes = input.keystrokes;
+    proposal.displayText = input.displayText;
+    if (input.reason?.trim()) {
+      proposal.reason = input.reason;
+    }
+
+    this.emit("updated", proposal);
+    return proposal;
+  }
+
   listPending(): KeystrokeProposal[] {
     return Array.from(this.proposals.values()).filter((proposal) => proposal.status === "pending");
   }

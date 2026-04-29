@@ -50,4 +50,58 @@ describe("ProposalManager", () => {
     expect(manager.listPending()).toEqual([]);
     expect(threads.writeKeystrokes).toHaveBeenCalledWith("thread-1", ["hello"]);
   });
+
+  it("updates pending proposal keystrokes before approval", () => {
+    const threads = {
+      getSummary: vi.fn(() => ({
+        id: "thread-1",
+        name: "Thread 1"
+      })),
+      writeKeystrokes: vi.fn(() => true)
+    };
+    const manager = new ProposalManager(threads as never);
+    const proposal = manager.create({
+      threadId: "thread-1",
+      keystrokes: ["hello"],
+      displayText: "hello",
+      reason: "test"
+    });
+
+    const updated = manager.update(proposal.id, {
+      keystrokes: ["goodbye", "<ENTER>"],
+      displayText: "goodbye",
+      reason: "updated"
+    });
+    manager.resolve(proposal.id, "approve");
+
+    expect(updated.displayText).toBe("goodbye");
+    expect(updated.reason).toBe("updated");
+    expect(threads.writeKeystrokes).toHaveBeenCalledWith("thread-1", ["goodbye", "<ENTER>"]);
+  });
+
+  it("rejects edits to resolved proposals", () => {
+    const threads = {
+      getSummary: vi.fn(() => ({
+        id: "thread-1",
+        name: "Thread 1"
+      })),
+      writeKeystrokes: vi.fn(() => true)
+    };
+    const manager = new ProposalManager(threads as never);
+    const proposal = manager.create({
+      threadId: "thread-1",
+      keystrokes: ["hello"],
+      displayText: "hello",
+      reason: "test"
+    });
+
+    manager.resolve(proposal.id, "reject");
+
+    expect(() =>
+      manager.update(proposal.id, {
+        keystrokes: ["goodbye"],
+        displayText: "goodbye"
+      })
+    ).toThrow("Cannot edit a resolved proposal");
+  });
 });

@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import headlessPkg from "@xterm/headless";
+import type { Terminal as HeadlessTerminalInstance } from "@xterm/headless";
 import type { IPty } from "node-pty";
 import * as pty from "node-pty";
 import type {
@@ -11,12 +14,17 @@ import { stripAnsi, tailLines } from "./ansi.js";
 import type { AppConfig } from "./config.js";
 import { encodeKeystrokes } from "./keystrokes.js";
 
+const HeadlessTerminal = (headlessPkg as typeof import("@xterm/headless")).Terminal;
+
 interface ManagedThread {
   id: string;
   name: string;
   cwd: string;
   state: ThreadState;
   process?: IPty;
+  screen: HeadlessTerminalInstance;
+  serializer: SerializeAddon;
+  screenWriteQueue: Promise<void>;
   rawBuffer: string;
   plainBuffer: string;
   exitCode?: number;
@@ -51,35 +59,43 @@ export class PtyThreadManager extends EventEmitter {
     return thread ? this.toSummary(thread) : undefined;
   }
 
-  getSnapshot(id: string): { raw: string; plain: string } | undefined {
+  async getSnapshot(id: string): Promise<{ raw: string; plain: string } | undefined> {
     const thread = this.threads.get(id);
     if (!thread) {
       return undefined;
     }
 
+    await thread.screenWriteQueue.catch(() => undefined);
     return {
-      raw: thread.rawBuffer,
-      plain: thread.plainBuffer
+      raw: thread.serializer.serialize(),
+      plain: renderedPlainText(thread.screen)
     };
   }
 
-  readPlain(id: string, lines: number): string | undefined {
+  async readPlain(id: string, lines: number): Promise<string | undefined> {
     const thread = this.threads.get(id);
     if (!thread) {
       return undefined;
     }
 
-    return tailLines(thread.plainBuffer, lines);
+    await thread.screenWriteQueue.catch(() => undefined);
+    return tailLines(renderedPlainText(thread.screen), lines);
   }
 
   create(input: { name?: string; cwd: string }): CodexThreadSummary {
     const id = randomUUID();
     const now = new Date();
+    const screen = new HeadlessTerminal({ cols: 100, rows: 30, allowProposedApi: true });
+    const serializer = new SerializeAddon();
+    screen.loadAddon(serializer as unknown as Parameters<HeadlessTerminalInstance["loadAddon"]>[0]);
     const thread: ManagedThread = {
       id,
       name: input.name?.trim() || `Codex ${this.threads.size + 1}`,
       cwd: input.cwd,
       state: "starting",
+      screen,
+      serializer,
+      screenWriteQueue: Promise.resolve(),
       rawBuffer: "",
       plainBuffer: "",
       createdAt: now,
@@ -163,6 +179,7 @@ export class PtyThreadManager extends EventEmitter {
     }
 
     thread.process.resize(Math.max(20, cols), Math.max(5, rows));
+    thread.screen.resize(Math.max(20, cols), Math.max(5, rows));
     return true;
   }
 
@@ -181,6 +198,14 @@ export class PtyThreadManager extends EventEmitter {
   }
 
   private append(thread: ManagedThread, data: string): void {
+    thread.screenWriteQueue = thread.screenWriteQueue
+      .catch(() => undefined)
+      .then(
+        () =>
+          new Promise<void>((resolve) => {
+            thread.screen.write(data, resolve);
+          })
+      );
     thread.rawBuffer = limitBuffer(thread.rawBuffer + data, this.config.scrollbackLimit);
     thread.plainBuffer = limitBuffer(stripAnsi(thread.rawBuffer), this.config.scrollbackLimit);
     thread.updatedAt = new Date();
@@ -224,4 +249,18 @@ function limitBuffer(value: string, maxLength: number): string {
   }
 
   return value.slice(value.length - maxLength);
+}
+
+function renderedPlainText(screen: HeadlessTerminalInstance): string {
+  const buffer = screen.buffer.active;
+  const lines: string[] = [];
+  for (let row = 0; row < buffer.length; row += 1) {
+    lines.push(buffer.getLine(row)?.translateToString(true) ?? "");
+  }
+
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines.join("\n");
 }

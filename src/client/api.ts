@@ -79,6 +79,12 @@ export async function readTerminal(
   return request(`/api/threads/${encodeURIComponent(threadId)}/read?lines=${lines}`);
 }
 
+export async function getTerminalSnapshot(
+  threadId: string
+): Promise<{ threadId: string; data: string; plainText: string }> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/snapshot`);
+}
+
 export async function createProposal(input: {
   threadId: string;
   keystrokes: string[];
@@ -100,6 +106,23 @@ export async function resolveProposal(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision })
+  });
+}
+
+export async function updateProposal(input: {
+  proposalId: string;
+  displayText: string;
+  keystrokes: string[];
+  reason?: string;
+}): Promise<{ proposal: KeystrokeProposal }> {
+  return request(`/api/proposals/${encodeURIComponent(input.proposalId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      displayText: input.displayText,
+      keystrokes: input.keystrokes,
+      reason: input.reason
+    })
   });
 }
 

@@ -212,7 +212,8 @@ input {
   font-size: 0.82rem;
 }
 
-.proposal pre {
+.proposal pre,
+.proposal-editor {
   max-height: 120px;
   overflow: auto;
   margin: 0;
@@ -222,6 +223,12 @@ input {
   color: #e7eef2;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.proposal-editor {
+  min-height: 92px;
+  border-color: rgba(255, 255, 255, 0.14);
+  resize: vertical;
 }
 
 .proposal-actions,
@@ -237,6 +244,7 @@ input {
   display: grid;
   align-items: end;
   padding: 12px;
+  overflow: hidden;
   background: rgba(0, 0, 0, 0.48);
   z-index: 10;
 }
@@ -261,6 +269,15 @@ input {
 
 .settings-modal {
   align-self: center;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.modal-scroll-body {
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .modal-header-row {

@@ -84,6 +84,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "When the user asks you to act, read the active terminal first if useful, then call draft_keystrokes with the exact keys or text you want to send.",
       "You may create and switch Codex threads by browsing directories and creating a thread in the chosen directory.",
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
+      "If the user asks to change pending keystrokes, call update_keystroke_proposal instead of creating a second proposal.",
       "If the user verbally approves or rejects a visible proposal, call resolve_keystroke_proposal.",
       "Use literal text tokens for normal typing. Use named tokens for special keys: <ENTER>, <ESC>, <TAB>, <BACKSPACE>, <CTRL_C>, <UP>, <DOWN>, <LEFT>, <RIGHT>.",
       "Keep spoken responses short."
@@ -156,6 +157,28 @@ function createRealtimeSessionConfig(config: AppConfig): object {
             decision: { type: "string", enum: ["approve", "reject"] }
           },
           required: ["proposalId", "decision"],
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "update_keystroke_proposal",
+        description:
+          "Edit an existing pending keystroke proposal. Use this when the user asks to change what will be sent before approval.",
+        parameters: {
+          type: "object",
+          properties: {
+            proposalId: { type: "string" },
+            keystrokes: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Updated literal text tokens and/or named tokens such as <ENTER>, <ESC>, <TAB>, <CTRL_C>."
+            },
+            displayText: { type: "string", description: "Updated human-readable terminal input." },
+            reason: { type: "string", description: "Optional updated reason." }
+          },
+          required: ["proposalId", "keystrokes", "displayText"],
           additionalProperties: false
         }
       },
