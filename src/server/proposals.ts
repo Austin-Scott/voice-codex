@@ -21,6 +21,18 @@ export class ProposalManager extends EventEmitter {
       throw new Error("Unknown thread");
     }
 
+    const existing = Array.from(this.proposals.values()).find(
+      (proposal) =>
+        proposal.status === "pending" &&
+        proposal.threadId === input.threadId &&
+        proposal.displayText === input.displayText &&
+        proposal.reason === input.reason &&
+        JSON.stringify(proposal.keystrokes) === JSON.stringify(input.keystrokes)
+    );
+    if (existing) {
+      return existing;
+    }
+
     const proposal: KeystrokeProposal = {
       id: randomUUID(),
       threadId: input.threadId,

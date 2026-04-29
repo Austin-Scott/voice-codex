@@ -35,6 +35,7 @@ export class RealtimeVoiceAgent {
   private dc: RTCDataChannel | undefined;
   private micTrack: MediaStreamTrack | undefined;
   private connected = false;
+  private handledCallIds = new Set<string>();
 
   constructor(
     private readonly toolsState: RealtimeToolsState,
@@ -120,6 +121,10 @@ export class RealtimeVoiceAgent {
     if (!item.call_id || !item.name) {
       return;
     }
+    if (this.handledCallIds.has(item.call_id)) {
+      return;
+    }
+    this.handledCallIds.add(item.call_id);
 
     try {
       const args = item.arguments ? JSON.parse(item.arguments) : {};
@@ -138,12 +143,20 @@ export class RealtimeVoiceAgent {
     }
 
     if (name === "read_terminal") {
-      return readTerminal(String(args.threadId), Number(args.lines ?? 80));
+      const threadId = this.resolveThreadId(args.threadId);
+      if (!threadId) {
+        return { error: "No active Codex thread is selected." };
+      }
+      return readTerminal(threadId, Number(args.lines ?? 120));
     }
 
     if (name === "draft_keystrokes") {
+      const threadId = this.resolveThreadId(args.threadId);
+      if (!threadId) {
+        return { error: "No active Codex thread is selected." };
+      }
       const response = await createProposal({
-        threadId: String(args.threadId),
+        threadId,
         keystrokes: Array.isArray(args.keystrokes)
           ? args.keystrokes.map((item) => String(item))
           : [String(args.keystrokes ?? "")],
@@ -188,6 +201,13 @@ export class RealtimeVoiceAgent {
     }
 
     return { error: `Unknown tool ${name}` };
+  }
+
+  private resolveThreadId(value: unknown): string | undefined {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+    return this.toolsState.getThreads().activeThreadId;
   }
 
   private sendToolOutput(callId: string, output: unknown): void {

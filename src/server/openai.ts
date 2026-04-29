@@ -102,7 +102,8 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       {
         type: "function",
         name: "read_terminal",
-        description: "Read recent plain-text terminal output for a managed Codex session.",
+        description:
+          "Read recent plain-text terminal output for a managed Codex session. Omit threadId to read the active terminal.",
         parameters: {
           type: "object",
           properties: {
@@ -113,7 +114,6 @@ function createRealtimeSessionConfig(config: AppConfig): object {
               default: 80
             }
           },
-          required: ["threadId"],
           additionalProperties: false
         }
       },
@@ -125,7 +125,10 @@ function createRealtimeSessionConfig(config: AppConfig): object {
         parameters: {
           type: "object",
           properties: {
-            threadId: { type: "string" },
+            threadId: {
+              type: "string",
+              description: "Target thread id. Omit to use the active terminal."
+            },
             keystrokes: {
               type: "array",
               items: { type: "string" },

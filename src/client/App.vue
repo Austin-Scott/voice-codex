@@ -51,6 +51,7 @@ const folderPickerOpen = ref(false);
 const directoryListing = ref<DirectoryListing | undefined>();
 const newDirectoryName = ref("");
 const touchControlsEnabled = ref(loadTouchControlsEnabled());
+const fullscreenActive = ref(Boolean(document.fullscreenElement));
 const touchMappings = reactive<TouchMappings>(loadTouchMappings());
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
@@ -75,12 +76,14 @@ const pendingProposals = computed(() =>
 onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown, true);
   window.addEventListener("keyup", handleKeyUp, true);
+  document.addEventListener("fullscreenchange", handleFullscreenChange);
   await loadSession();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKeyDown, true);
   window.removeEventListener("keyup", handleKeyUp, true);
+  document.removeEventListener("fullscreenchange", handleFullscreenChange);
   resizeObserver?.disconnect();
   pedal?.dispose();
   touchInput?.dispose();
@@ -286,7 +289,7 @@ function handleServerEvent(event: ServerEvent): void {
 
   if (event.type === "terminal.delta") {
     if (event.threadId === activeThreadId.value) {
-      terminal?.write(event.data);
+      writeTerminal(event.data);
     }
     return;
   }
@@ -294,7 +297,7 @@ function handleServerEvent(event: ServerEvent): void {
   if (event.type === "terminal.snapshot") {
     if (event.threadId === activeThreadId.value) {
       terminal?.reset();
-      terminal?.write(event.data);
+      writeTerminal(event.data);
     }
     return;
   }
@@ -305,7 +308,7 @@ function handleServerEvent(event: ServerEvent): void {
   }
 
   if (event.type === "proposal.resolved") {
-    upsertProposal(event.proposal);
+    removeProposal(event.proposal.id);
     return;
   }
 
@@ -392,12 +395,12 @@ async function stopSelectedThread(): Promise<void> {
 
 async function approveProposal(proposal: KeystrokeProposal): Promise<void> {
   const response = await resolveProposal(proposal.id, "approve");
-  upsertProposal(response.proposal);
+  removeProposal(response.proposal.id);
 }
 
 async function rejectProposal(proposal: KeystrokeProposal): Promise<void> {
   const response = await resolveProposal(proposal.id, "reject");
-  upsertProposal(response.proposal);
+  removeProposal(response.proposal.id);
 }
 
 function requestSnapshot(threadId: string): void {
@@ -537,6 +540,22 @@ function handleTouchCancel(): void {
   touchInput?.cancel();
 }
 
+async function toggleFullscreen(): Promise<void> {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function handleFullscreenChange(): void {
+  fullscreenActive.value = Boolean(document.fullscreenElement);
+}
+
 function upsertThread(thread: CodexThreadSummary): void {
   const index = threads.value.findIndex((existing) => existing.id === thread.id);
   if (index >= 0) {
@@ -547,12 +566,33 @@ function upsertThread(thread: CodexThreadSummary): void {
 }
 
 function upsertProposal(proposal: KeystrokeProposal): void {
+  if (proposal.status !== "pending") {
+    removeProposal(proposal.id);
+    return;
+  }
+
   const index = proposals.value.findIndex((existing) => existing.id === proposal.id);
   if (index >= 0) {
     proposals.value.splice(index, 1, proposal);
   } else {
     proposals.value.unshift(proposal);
   }
+}
+
+function removeProposal(proposalId: string): void {
+  const index = proposals.value.findIndex((existing) => existing.id === proposalId);
+  if (index >= 0) {
+    proposals.value.splice(index, 1);
+  }
+}
+
+function writeTerminal(data: string): void {
+  if (!terminal) {
+    return;
+  }
+  terminal.write(data, () => {
+    terminal?.scrollToBottom();
+  });
 }
 
 function loadPedalBindings(): PedalBindings {
@@ -828,6 +868,10 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
             @change="saveTouchControlsEnabled"
           />
         </label>
+        <button class="btn btn-outline-light w-100" type="button" @click="toggleFullscreen">
+          <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
+          {{ fullscreenActive ? "Exit Fullscreen" : "Enter Fullscreen" }}
+        </button>
         <div class="touch-map-row">
           <label for="touch-agent">Agent PTT</label>
           <select

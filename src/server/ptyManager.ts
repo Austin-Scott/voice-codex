@@ -1,7 +1,5 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import type { IPty } from "node-pty";
 import * as pty from "node-pty";
 import type {
@@ -93,7 +91,7 @@ export class PtyThreadManager extends EventEmitter {
     this.emit("thread", this.toSummary(thread));
 
     try {
-      const command = resolveCodexCommand(this.config.codexBin, this.config.codexArgs);
+      const command = resolveShellCommand(this.config.codexBin, this.config.codexArgs);
       const proc = pty.spawn(command.file, command.args, {
         name: "xterm-256color",
         cols: 100,
@@ -203,18 +201,21 @@ export class PtyThreadManager extends EventEmitter {
   }
 }
 
-function resolveCodexCommand(codexBin: string, codexArgs: string[]): { file: string; args: string[] } {
-  if (process.platform === "win32" && codexBin === "codex") {
-    const appData = process.env.APPDATA;
-    if (appData) {
-      const codexJs = path.join(appData, "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
-      if (fs.existsSync(codexJs)) {
-        return { file: process.execPath, args: [codexJs, ...codexArgs] };
-      }
-    }
+function resolveShellCommand(command: string, args: string[]): { file: string; args: string[] } {
+  const shellCommand = [command, ...args.map(quoteShellPart)].join(" ");
+  if (process.platform === "win32") {
+    return { file: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/c", shellCommand] };
   }
 
-  return { file: codexBin, args: codexArgs };
+  return { file: process.env.SHELL ?? "/bin/sh", args: ["-lc", shellCommand] };
+}
+
+function quoteShellPart(value: string): string {
+  if (process.platform === "win32") {
+    return `"${value.replace(/"/g, '\\"')}"`;
+  }
+
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function limitBuffer(value: string, maxLength: number): string {
