@@ -29,7 +29,7 @@ export async function createRealtimeAnswer(config: AppConfig, offerSdp: string):
 
   const responseText = await response.text();
   if (!response.ok) {
-    throw new Error(responseText || `Realtime session failed with HTTP ${response.status}`);
+    throw new Error(summarizeOpenAiError(response.status, responseText));
   }
 
   return responseText;
@@ -67,7 +67,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
   return {
     type: "realtime",
     model: config.realtimeModel,
-    output_modalities: ["audio", "text"],
+    output_modalities: ["audio"],
     audio: {
       input: {
         turn_detection: {
@@ -218,4 +218,25 @@ function createRealtimeSessionConfig(config: AppConfig): object {
     ],
     tool_choice: "auto"
   };
+}
+
+function summarizeOpenAiError(status: number, body: string): string {
+  try {
+    const data = JSON.parse(body) as { error?: { message?: string }; message?: string };
+    const message = data.error?.message ?? data.message;
+    if (message) {
+      return `Realtime session failed with HTTP ${status}: ${message}`;
+    }
+  } catch {
+    // Fall through to compact text handling.
+  }
+
+  const compact = body
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 280);
+  return `Realtime session failed with HTTP ${status}${compact ? `: ${compact}` : ""}`;
 }

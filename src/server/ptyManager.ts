@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import type { IPty } from "node-pty";
 import * as pty from "node-pty";
 import type {
@@ -91,7 +93,8 @@ export class PtyThreadManager extends EventEmitter {
     this.emit("thread", this.toSummary(thread));
 
     try {
-      const proc = pty.spawn(this.config.codexBin, this.config.codexArgs, {
+      const command = resolveCodexCommand(this.config.codexBin, this.config.codexArgs);
+      const proc = pty.spawn(command.file, command.args, {
         name: "xterm-256color",
         cols: 100,
         rows: 30,
@@ -121,7 +124,10 @@ export class PtyThreadManager extends EventEmitter {
     } catch (error) {
       thread.state = "error";
       thread.error = error instanceof Error ? error.message : String(error);
+      const errorOutput = `\r\nVoice Codex failed to start Codex CLI:\r\n${thread.error}\r\n`;
+      this.append(thread, errorOutput);
       thread.updatedAt = new Date();
+      this.emit("delta", { threadId: thread.id, data: errorOutput } satisfies TerminalDelta);
       this.emit("thread", this.toSummary(thread));
     }
 
@@ -195,6 +201,20 @@ export class PtyThreadManager extends EventEmitter {
       updatedAt: thread.updatedAt.toISOString()
     };
   }
+}
+
+function resolveCodexCommand(codexBin: string, codexArgs: string[]): { file: string; args: string[] } {
+  if (process.platform === "win32" && codexBin === "codex") {
+    const appData = process.env.APPDATA;
+    if (appData) {
+      const codexJs = path.join(appData, "npm", "node_modules", "@openai", "codex", "bin", "codex.js");
+      if (fs.existsSync(codexJs)) {
+        return { file: process.execPath, args: [codexJs, ...codexArgs] };
+      }
+    }
+  }
+
+  return { file: codexBin, args: codexArgs };
 }
 
 function limitBuffer(value: string, maxLength: number): string {

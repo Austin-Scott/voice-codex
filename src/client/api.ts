@@ -121,7 +121,13 @@ export async function createRealtimeAnswer(offerSdp: string): Promise<string> {
   });
 
   if (!response.ok) {
-    throw new Error(await response.text());
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const body = (await response.json()) as { error?: string };
+      throw new Error(body.error ?? `Realtime session failed with HTTP ${response.status}`);
+    }
+    const text = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 280);
+    throw new Error(text || `Realtime session failed with HTTP ${response.status}`);
   }
 
   return response.text();

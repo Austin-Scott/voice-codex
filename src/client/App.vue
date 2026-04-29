@@ -23,11 +23,13 @@ import {
 } from "./api";
 import {
   DEFAULT_PEDAL_BINDINGS,
+  DEFAULT_TOUCH_MAPPINGS,
   PedalInput,
   TouchButtonInput,
   type TouchPoint,
   type PedalBindings,
-  type PedalHandlers
+  type PedalHandlers,
+  type TouchMappings
 } from "./pedal";
 import { RealtimeVoiceAgent } from "./realtime";
 import { VoiceCodexSocket } from "./socket";
@@ -49,6 +51,7 @@ const folderPickerOpen = ref(false);
 const directoryListing = ref<DirectoryListing | undefined>();
 const newDirectoryName = ref("");
 const touchControlsEnabled = ref(loadTouchControlsEnabled());
+const touchMappings = reactive<TouchMappings>(loadTouchMappings());
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
 let socket: VoiceCodexSocket | undefined;
@@ -188,24 +191,27 @@ function setupPedal(): void {
 
 function setupTouchInput(): void {
   touchInput?.dispose();
-  touchInput = new TouchButtonInput({
-    onAgentDown: () => {
-      agentPressed = true;
-      void startAgentPushToTalk();
+  touchInput = new TouchButtonInput(
+    {
+      onAgentDown: () => {
+        agentPressed = true;
+        void startAgentPushToTalk();
+      },
+      onAgentUp: () => {
+        agentPressed = false;
+        voiceAgent?.setListening(false);
+      },
+      onWhisperDown: () => {
+        void startWhisper();
+      },
+      onWhisperUp: () => {
+        void stopWhisper();
+      },
+      onActionEnter: () => sendTerminal("\r"),
+      onActionEsc: () => sendTerminal("\u001b")
     },
-    onAgentUp: () => {
-      agentPressed = false;
-      voiceAgent?.setListening(false);
-    },
-    onWhisperDown: () => {
-      void startWhisper();
-    },
-    onWhisperUp: () => {
-      void stopWhisper();
-    },
-    onActionEnter: () => sendTerminal("\r"),
-    onActionEsc: () => sendTerminal("\u001b")
-  });
+    { ...touchMappings }
+  );
 }
 
 function connectSocket(): void {
@@ -574,6 +580,60 @@ function saveTouchControlsEnabled(): void {
   window.localStorage.setItem("voice-codex-touch-controls", String(touchControlsEnabled.value));
 }
 
+function loadTouchMappings(): TouchMappings {
+  const stored = window.localStorage.getItem("voice-codex-touch-mappings");
+  if (!stored) {
+    return { ...DEFAULT_TOUCH_MAPPINGS };
+  }
+
+  try {
+    return normalizeTouchMappings(JSON.parse(stored) as Partial<TouchMappings>);
+  } catch {
+    return { ...DEFAULT_TOUCH_MAPPINGS };
+  }
+}
+
+function setTouchMapping(kind: keyof TouchMappings, value: string): void {
+  const next = Number(value);
+  const previous = touchMappings[kind];
+  const swappedKind = (Object.keys(touchMappings) as Array<keyof TouchMappings>).find(
+    (candidate) => candidate !== kind && touchMappings[candidate] === next
+  );
+
+  touchMappings[kind] = next;
+  if (swappedKind) {
+    touchMappings[swappedKind] = previous;
+  }
+
+  saveTouchMappings();
+}
+
+function onTouchMappingChange(kind: keyof TouchMappings, event: Event): void {
+  const target = event.target;
+  if (target instanceof HTMLSelectElement) {
+    setTouchMapping(kind, target.value);
+  }
+}
+
+function saveTouchMappings(): void {
+  window.localStorage.setItem("voice-codex-touch-mappings", JSON.stringify(touchMappings));
+  touchInput?.setMappings({ ...touchMappings });
+}
+
+function normalizeTouchMappings(input: Partial<TouchMappings>): TouchMappings {
+  const values = [input.agent, input.whisper, input.action].map((value) => Number(value));
+  const valid = values.every((value) => [1, 2, 3].includes(value)) && new Set(values).size === 3;
+  if (!valid) {
+    return { ...DEFAULT_TOUCH_MAPPINGS };
+  }
+
+  return {
+    agent: values[0],
+    whisper: values[1],
+    action: values[2]
+  };
+}
+
 function syncQrHostInput(): void {
   if (!session.value?.pairing.controllerUrl) {
     return;
@@ -768,6 +828,45 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
             @change="saveTouchControlsEnabled"
           />
         </label>
+        <div class="touch-map-row">
+          <label for="touch-agent">Agent PTT</label>
+          <select
+            id="touch-agent"
+            class="form-select form-select-sm"
+            :value="touchMappings.agent"
+            @change="onTouchMappingChange('agent', $event)"
+          >
+            <option value="1">1 finger</option>
+            <option value="2">2 fingers</option>
+            <option value="3">3 fingers</option>
+          </select>
+        </div>
+        <div class="touch-map-row">
+          <label for="touch-whisper">Whisper PTT</label>
+          <select
+            id="touch-whisper"
+            class="form-select form-select-sm"
+            :value="touchMappings.whisper"
+            @change="onTouchMappingChange('whisper', $event)"
+          >
+            <option value="1">1 finger</option>
+            <option value="2">2 fingers</option>
+            <option value="3">3 fingers</option>
+          </select>
+        </div>
+        <div class="touch-map-row">
+          <label for="touch-action">Enter/Esc</label>
+          <select
+            id="touch-action"
+            class="form-select form-select-sm"
+            :value="touchMappings.action"
+            @change="onTouchMappingChange('action', $event)"
+          >
+            <option value="1">1 finger</option>
+            <option value="2">2 fingers</option>
+            <option value="3">3 fingers</option>
+          </select>
+        </div>
       </section>
     </div>
 

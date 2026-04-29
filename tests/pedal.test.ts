@@ -81,6 +81,7 @@ describe("TouchButtonInput", () => {
         onActionEnter: () => actions.push("enter"),
         onActionEsc: () => actions.push("esc")
       },
+      { agent: 1, whisper: 2, action: 3 },
       { stationaryMs: 100, movementPx: 10 }
     );
 
@@ -104,6 +105,7 @@ describe("TouchButtonInput", () => {
         onActionEnter: () => actions.push("enter"),
         onActionEsc: () => actions.push("esc")
       },
+      { agent: 1, whisper: 2, action: 3 },
       { stationaryMs: 100, movementPx: 10 }
     );
 
@@ -130,6 +132,7 @@ describe("TouchButtonInput", () => {
         onActionEnter: () => actions.push("enter"),
         onActionEsc: () => actions.push("esc")
       },
+      { agent: 1, whisper: 2, action: 3 },
       { stationaryMs: 100, movementPx: 10 }
     );
 
@@ -171,6 +174,7 @@ describe("TouchButtonInput", () => {
         onActionEnter: () => actions.push("enter"),
         onActionEsc: () => actions.push("esc")
       },
+      { agent: 1, whisper: 2, action: 3 },
       { stationaryMs: 100, movementPx: 10 }
     );
 
@@ -180,6 +184,37 @@ describe("TouchButtonInput", () => {
     input.end();
 
     expect(actions).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  it("supports custom finger mappings", () => {
+    vi.useFakeTimers();
+    const actions: string[] = [];
+    const input = new TouchButtonInput(
+      {
+        onAgentDown: () => actions.push("agentDown"),
+        onAgentUp: () => actions.push("agentUp"),
+        onWhisperDown: () => actions.push("whisperDown"),
+        onWhisperUp: () => actions.push("whisperUp"),
+        onActionEnter: () => actions.push("enter"),
+        onActionEsc: () => actions.push("esc")
+      },
+      { agent: 2, whisper: 3, action: 1 },
+      { stationaryMs: 100, movementPx: 10 }
+    );
+
+    input.start([
+      { id: 1, x: 10, y: 10 },
+      { id: 2, x: 20, y: 10 }
+    ]);
+    vi.advanceTimersByTime(100);
+    input.end();
+
+    input.start([{ id: 1, x: 10, y: 10 }]);
+    input.end();
+    vi.advanceTimersByTime(260);
+
+    expect(actions).toEqual(["agentDown", "agentUp", "enter"]);
     vi.useRealTimers();
   });
 });

@@ -317,12 +317,18 @@ input {
 }
 
 .binding-row,
-.touch-toggle {
+.touch-toggle,
+.touch-map-row {
   min-height: 42px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.touch-map-row .form-select {
+  width: 130px;
+  flex: 0 0 auto;
 }
 
 .empty-state {

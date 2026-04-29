@@ -19,6 +19,18 @@ export interface TouchPoint {
   y: number;
 }
 
+export interface TouchMappings {
+  agent: number;
+  whisper: number;
+  action: number;
+}
+
+export const DEFAULT_TOUCH_MAPPINGS: TouchMappings = {
+  agent: 1,
+  whisper: 2,
+  action: 3
+};
+
 export const DEFAULT_PEDAL_BINDINGS: PedalBindings = {
   agent: "F13",
   whisper: "F14",
@@ -157,9 +169,14 @@ export class TouchButtonInput {
 
   constructor(
     private readonly handlers: PedalHandlers,
+    private mappings: TouchMappings = DEFAULT_TOUCH_MAPPINGS,
     private readonly options = { stationaryMs: 180, movementPx: 18 }
   ) {
     this.actionGesture = new TapDoubleHoldGesture(handlers.onActionEnter, handlers.onActionEsc);
+  }
+
+  setMappings(mappings: TouchMappings): void {
+    this.mappings = mappings;
   }
 
   start(points: TouchPoint[]): boolean {
@@ -169,6 +186,11 @@ export class TouchButtonInput {
     }
 
     const count = points.length;
+    const action = this.actionForCount(count);
+    if (!action) {
+      return false;
+    }
+
     this.active = {
       count,
       center: centerOf(points),
@@ -176,13 +198,13 @@ export class TouchButtonInput {
       pttStarted: false
     };
 
-    if (count === 1 || count === 2) {
+    if (action === "agent" || action === "whisper") {
       this.active.timer = setTimeout(() => {
         if (!this.active || this.active.canceled || this.active.pttStarted) {
           return;
         }
         this.active.pttStarted = true;
-        if (count === 1) {
+        if (action === "agent") {
           this.handlers.onAgentDown();
         } else {
           this.handlers.onWhisperDown();
@@ -206,7 +228,7 @@ export class TouchButtonInput {
       return false;
     }
 
-    return this.active.pttStarted || this.active.count === 3;
+    return this.active.pttStarted || this.actionForCount(this.active.count) === "action";
   }
 
   end(): boolean {
@@ -224,17 +246,18 @@ export class TouchButtonInput {
       return false;
     }
 
-    if (active.count === 1 && active.pttStarted) {
+    const action = this.actionForCount(active.count);
+    if (action === "agent" && active.pttStarted) {
       this.handlers.onAgentUp();
       return true;
     }
 
-    if (active.count === 2 && active.pttStarted) {
+    if (action === "whisper" && active.pttStarted) {
       this.handlers.onWhisperUp();
       return true;
     }
 
-    if (active.count === 3) {
+    if (action === "action") {
       this.actionGesture.up();
       return true;
     }
@@ -254,11 +277,12 @@ export class TouchButtonInput {
       clearTimeout(active.timer);
     }
 
-    if (active.count === 1 && active.pttStarted) {
+    const action = this.actionForCount(active.count);
+    if (action === "agent" && active.pttStarted) {
       this.handlers.onAgentUp();
     }
 
-    if (active.count === 2 && active.pttStarted) {
+    if (action === "whisper" && active.pttStarted) {
       this.handlers.onWhisperUp();
     }
   }
@@ -266,6 +290,19 @@ export class TouchButtonInput {
   dispose(): void {
     this.cancel();
     this.actionGesture.dispose();
+  }
+
+  private actionForCount(count: number): "agent" | "whisper" | "action" | undefined {
+    if (this.mappings.agent === count) {
+      return "agent";
+    }
+    if (this.mappings.whisper === count) {
+      return "whisper";
+    }
+    if (this.mappings.action === count) {
+      return "action";
+    }
+    return undefined;
   }
 }
 
