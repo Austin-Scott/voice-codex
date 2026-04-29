@@ -104,7 +104,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
         type: "function",
         name: "read_terminal",
         description:
-          "Read recent plain-text terminal output for a managed Codex session. Omit threadId to read the active terminal.",
+          "Read plain-text terminal output for a managed Codex session. When reading the active controller thread, this returns the browser's currently visible terminal viewport, including the user's scroll position.",
         parameters: {
           type: "object",
           properties: {

@@ -28,6 +28,7 @@ interface RealtimeFunctionCall {
 
 export interface RealtimeToolsState {
   getThreads: () => { threads: CodexThreadSummary[]; activeThreadId?: string };
+  getVisibleTerminalText: () => { threadId?: string; text: string; startLine: number; endLine: number };
   setActiveThread: (threadId: string) => void;
   showDirectoryListing: (listing: DirectoryListing) => void;
   showFolderPicker: () => void;
@@ -39,6 +40,7 @@ export class RealtimeVoiceAgent {
   private dc: RTCDataChannel | undefined;
   private micTrack: MediaStreamTrack | undefined;
   private connected = false;
+  private connectPromise: Promise<void> | undefined;
   private handledCallIds = new Set<string>();
 
   constructor(
@@ -51,7 +53,20 @@ export class RealtimeVoiceAgent {
     if (this.connected) {
       return;
     }
+    if (this.connectPromise) {
+      await this.connectPromise;
+      return;
+    }
 
+    this.connectPromise = this.connect();
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = undefined;
+    }
+  }
+
+  private async connect(): Promise<void> {
     this.onStatus("Connecting voice agent");
     const pc = new RTCPeerConnection();
     this.pc = pc;
@@ -69,6 +84,17 @@ export class RealtimeVoiceAgent {
 
     const dc = pc.createDataChannel("oai-events");
     this.dc = dc;
+    const channelOpen = new Promise<void>((resolve, reject) => {
+      dc.addEventListener("open", () => resolve(), { once: true });
+      dc.addEventListener("error", () => reject(new Error("Voice agent data channel failed")), {
+        once: true
+      });
+      dc.addEventListener("close", () => {
+        if (!this.connected) {
+          reject(new Error("Voice agent data channel closed before opening"));
+        }
+      }, { once: true });
+    });
     dc.addEventListener("open", () => {
       this.connected = true;
       this.onStatus("Voice agent ready");
@@ -83,6 +109,7 @@ export class RealtimeVoiceAgent {
     await pc.setLocalDescription(offer);
     const answerSdp = await createRealtimeAnswer(offer.sdp ?? "");
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    await channelOpen;
   }
 
   setListening(active: boolean): void {
@@ -93,10 +120,17 @@ export class RealtimeVoiceAgent {
   }
 
   disconnect(): void {
+    this.setListening(false);
     this.micTrack?.stop();
     this.dc?.close();
     this.pc?.close();
+    this.micTrack = undefined;
+    this.dc = undefined;
+    this.pc = undefined;
+    this.connectPromise = undefined;
     this.connected = false;
+    this.handledCallIds.clear();
+    this.onStatus("Voice agent idle");
   }
 
   private handleMessage(raw: string): void {
@@ -150,6 +184,16 @@ export class RealtimeVoiceAgent {
       const threadId = this.resolveThreadId(args.threadId);
       if (!threadId) {
         return { error: "No active Codex thread is selected." };
+      }
+      const visible = this.toolsState.getVisibleTerminalText();
+      if (!args.threadId || args.threadId === visible.threadId) {
+        return {
+          threadId: visible.threadId,
+          text: visible.text,
+          source: "visible_browser_viewport",
+          startLine: visible.startLine,
+          endLine: visible.endLine
+        };
       }
       return readTerminal(threadId, Number(args.lines ?? 120));
     }

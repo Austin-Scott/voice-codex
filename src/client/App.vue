@@ -35,7 +35,12 @@ import {
 } from "./pedal";
 import { RealtimeVoiceAgent } from "./realtime";
 import { VoiceCodexSocket } from "./socket";
-import { shouldRenderTerminalFrame } from "./terminalFrames";
+import { getLatestContentScrollLine, shouldRenderTerminalFrame } from "./terminalFrames";
+
+interface MinimalWakeLockSentinel {
+  release: () => Promise<void>;
+  addEventListener: (type: "release", listener: () => void, options?: AddEventListenerOptions) => void;
+}
 
 const session = ref<SessionResponse | undefined>();
 const errorMessage = ref("");
@@ -69,6 +74,8 @@ let agentPressed = false;
 let whisperRecorder: MediaRecorder | undefined;
 let whisperStream: MediaStream | undefined;
 let whisperChunks: Blob[] = [];
+let agentIdleTimer: ReturnType<typeof window.setTimeout> | undefined;
+let wakeLock: MinimalWakeLockSentinel | undefined;
 const lastFrameSequences = new Map<string, number>();
 
 const isController = computed(() => Boolean(session.value?.isController));
@@ -81,6 +88,8 @@ onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown, true);
   window.addEventListener("keyup", handleKeyUp, true);
   document.addEventListener("fullscreenchange", handleFullscreenChange);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("pointerdown", handleWakeLockGesture, { passive: true });
   await loadSession();
 });
 
@@ -88,10 +97,14 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKeyDown, true);
   window.removeEventListener("keyup", handleKeyUp, true);
   document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+  window.removeEventListener("pointerdown", handleWakeLockGesture);
   resizeObserver?.disconnect();
   pedal?.dispose();
   touchInput?.dispose();
+  clearAgentIdleTimer();
   voiceAgent?.disconnect();
+  void releaseWakeLock();
   socket?.close();
   terminalElement.value?.removeEventListener("touchstart", handleTouchStart);
   terminalElement.value?.removeEventListener("touchmove", handleTouchMove);
@@ -148,6 +161,7 @@ async function initializeController(): Promise<void> {
   connectSocket();
   await nextTick();
   setupTerminal();
+  void requestWakeLock();
 }
 
 async function refreshThreads(): Promise<void> {
@@ -160,6 +174,7 @@ function setupVoiceAgent(): void {
   voiceAgent = new RealtimeVoiceAgent(
     {
       getThreads: () => ({ threads: threads.value, activeThreadId: activeThreadId.value }),
+      getVisibleTerminalText,
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
         void loadThreadSnapshot(threadId);
@@ -187,12 +202,10 @@ function setupVoiceAgent(): void {
 function setupPedal(): void {
   const handlers: PedalHandlers = {
     onAgentDown: () => {
-      agentPressed = true;
-      void startAgentPushToTalk();
+      handleAgentDown();
     },
     onAgentUp: () => {
-      agentPressed = false;
-      voiceAgent?.setListening(false);
+      handleAgentUp();
     },
     onWhisperDown: () => {
       void startWhisper();
@@ -211,12 +224,10 @@ function setupTouchInput(): void {
   touchInput = new TouchButtonInput(
     {
       onAgentDown: () => {
-        agentPressed = true;
-        void startAgentPushToTalk();
+        handleAgentDown();
       },
       onAgentUp: () => {
-        agentPressed = false;
-        voiceAgent?.setListening(false);
+        handleAgentUp();
       },
       onWhisperDown: () => {
         void startWhisper();
@@ -465,12 +476,42 @@ function sendTerminal(data: string): void {
 
 async function startAgentPushToTalk(): Promise<void> {
   try {
+    clearAgentIdleTimer();
     await voiceAgent?.ensureConnected();
     if (agentPressed) {
       voiceAgent?.setListening(true);
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function handleAgentDown(): void {
+  agentPressed = true;
+  clearAgentIdleTimer();
+  void startAgentPushToTalk();
+}
+
+function handleAgentUp(): void {
+  agentPressed = false;
+  voiceAgent?.setListening(false);
+  scheduleAgentIdleDisconnect();
+}
+
+function scheduleAgentIdleDisconnect(): void {
+  clearAgentIdleTimer();
+  agentIdleTimer = window.setTimeout(() => {
+    agentIdleTimer = undefined;
+    if (!agentPressed) {
+      voiceAgent?.disconnect();
+    }
+  }, 30_000);
+}
+
+function clearAgentIdleTimer(): void {
+  if (agentIdleTimer) {
+    window.clearTimeout(agentIdleTimer);
+    agentIdleTimer = undefined;
   }
 }
 
@@ -604,6 +645,18 @@ function handleFullscreenChange(): void {
   fullscreenActive.value = Boolean(document.fullscreenElement);
 }
 
+function handleVisibilityChange(): void {
+  if (document.visibilityState === "visible") {
+    void requestWakeLock();
+  }
+}
+
+function handleWakeLockGesture(): void {
+  if (!wakeLock && isController.value) {
+    void requestWakeLock();
+  }
+}
+
 function upsertThread(thread: CodexThreadSummary): void {
   const index = threads.value.findIndex((existing) => existing.id === thread.id);
   if (index >= 0) {
@@ -639,7 +692,7 @@ function writeTerminal(data: string): void {
     return;
   }
   terminal.write(data, () => {
-    terminal?.scrollToBottom();
+    scrollToLatestTerminalContent();
   });
 }
 
@@ -654,8 +707,83 @@ function replaceTerminalContent(data: string): void {
   }
 
   terminal.write(`\x1bc${data}`, () => {
-    terminal?.scrollToBottom();
+    scrollToLatestTerminalContent();
   });
+}
+
+function scrollToLatestTerminalContent(): void {
+  if (!terminal) {
+    return;
+  }
+
+  const buffer = terminal.buffer.active;
+  terminal.scrollToLine(
+    getLatestContentScrollLine({
+      bufferLength: buffer.length,
+      rows: terminal.rows,
+      lineAt: (index) => buffer.getLine(index)?.translateToString(true)
+    })
+  );
+}
+
+function getVisibleTerminalText(): {
+  threadId?: string;
+  text: string;
+  startLine: number;
+  endLine: number;
+} {
+  if (!terminal) {
+    return { threadId: activeThreadId.value, text: "", startLine: 0, endLine: 0 };
+  }
+
+  const buffer = terminal.buffer.active;
+  const startLine = buffer.viewportY;
+  const endLine = Math.min(buffer.length - 1, startLine + terminal.rows - 1);
+  const lines: string[] = [];
+  for (let index = startLine; index <= endLine; index += 1) {
+    lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+  }
+
+  return {
+    threadId: activeThreadId.value,
+    text: lines.join("\n").replace(/\s+$/g, ""),
+    startLine,
+    endLine
+  };
+}
+
+async function requestWakeLock(): Promise<void> {
+  if (!isController.value || wakeLock || document.visibilityState !== "visible") {
+    return;
+  }
+
+  const wakeLockApi = (
+    navigator as Navigator & {
+      wakeLock?: { request: (type: "screen") => Promise<MinimalWakeLockSentinel> };
+    }
+  ).wakeLock;
+  if (!wakeLockApi) {
+    return;
+  }
+
+  try {
+    wakeLock = await wakeLockApi.request("screen");
+    wakeLock.addEventListener(
+      "release",
+      () => {
+        wakeLock = undefined;
+      },
+      { once: true }
+    );
+  } catch {
+    wakeLock = undefined;
+  }
+}
+
+async function releaseWakeLock(): Promise<void> {
+  const current = wakeLock;
+  wakeLock = undefined;
+  await current?.release().catch(() => undefined);
 }
 
 function loadPedalBindings(): PedalBindings {
