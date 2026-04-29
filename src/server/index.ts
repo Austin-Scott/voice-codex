@@ -180,7 +180,7 @@ app.get(
       return;
     }
 
-    res.json({ threadId, data: snapshot.raw, plainText: snapshot.plain });
+    res.json({ type: "terminal.snapshot", ...snapshot });
   })
 );
 
@@ -290,8 +290,8 @@ wss.on("connection", (ws) => {
   });
 });
 
-threads.on("delta", ({ threadId, data }: { threadId: string; data: string }) => {
-  broadcast({ type: "terminal.delta", threadId, data });
+threads.on("frame", (frame) => {
+  broadcast({ type: "terminal.frame", ...frame });
 });
 
 threads.on("thread", (thread) => {
@@ -359,9 +359,7 @@ async function handleClientEvent(ws: WebSocket, raw: string): Promise<void> {
     if (snapshot) {
       send(ws, {
         type: "terminal.snapshot",
-        threadId: event.threadId,
-        data: snapshot.raw,
-        plainText: snapshot.plain
+        ...snapshot
       });
     }
     return;

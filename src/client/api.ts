@@ -2,7 +2,8 @@ import type {
   CodexThreadSummary,
   DirectoryListing,
   KeystrokeProposal,
-  SessionResponse
+  SessionResponse,
+  TerminalSnapshotEvent
 } from "@shared/protocol";
 
 export async function getSession(pairHost?: string): Promise<SessionResponse> {
@@ -81,7 +82,7 @@ export async function readTerminal(
 
 export async function getTerminalSnapshot(
   threadId: string
-): Promise<{ threadId: string; data: string; plainText: string }> {
+): Promise<TerminalSnapshotEvent> {
   return request(`/api/threads/${encodeURIComponent(threadId)}/snapshot`);
 }
 

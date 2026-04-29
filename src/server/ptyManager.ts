@@ -1,20 +1,18 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { SerializeAddon } from "@xterm/addon-serialize";
-import headlessPkg from "@xterm/headless";
-import type { Terminal as HeadlessTerminalInstance } from "@xterm/headless";
 import type { IPty } from "node-pty";
 import * as pty from "node-pty";
 import type {
   CodexThreadSummary,
+  TerminalFramePayload,
   TerminalKeyToken,
   ThreadState
 } from "../shared/protocol.js";
-import { stripAnsi, tailLines } from "./ansi.js";
 import type { AppConfig } from "./config.js";
 import { encodeKeystrokes } from "./keystrokes.js";
+import { TerminalScreen } from "./terminalScreen.js";
 
-const HeadlessTerminal = (headlessPkg as typeof import("@xterm/headless")).Terminal;
+const FRAME_INTERVAL_MS = 75;
 
 interface ManagedThread {
   id: string;
@@ -22,20 +20,12 @@ interface ManagedThread {
   cwd: string;
   state: ThreadState;
   process?: IPty;
-  screen: HeadlessTerminalInstance;
-  serializer: SerializeAddon;
-  screenWriteQueue: Promise<void>;
-  rawBuffer: string;
-  plainBuffer: string;
+  terminal: TerminalScreen;
+  frameTimer?: NodeJS.Timeout;
   exitCode?: number;
   error?: string;
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface TerminalDelta {
-  threadId: string;
-  data: string;
 }
 
 export class PtyThreadManager extends EventEmitter {
@@ -59,17 +49,13 @@ export class PtyThreadManager extends EventEmitter {
     return thread ? this.toSummary(thread) : undefined;
   }
 
-  async getSnapshot(id: string): Promise<{ raw: string; plain: string } | undefined> {
+  async getSnapshot(id: string): Promise<TerminalFramePayload | undefined> {
     const thread = this.threads.get(id);
     if (!thread) {
       return undefined;
     }
 
-    await thread.screenWriteQueue.catch(() => undefined);
-    return {
-      raw: thread.serializer.serialize(),
-      plain: renderedPlainText(thread.screen)
-    };
+    return thread.terminal.snapshot(thread.id);
   }
 
   async readPlain(id: string, lines: number): Promise<string | undefined> {
@@ -78,26 +64,18 @@ export class PtyThreadManager extends EventEmitter {
       return undefined;
     }
 
-    await thread.screenWriteQueue.catch(() => undefined);
-    return tailLines(renderedPlainText(thread.screen), lines);
+    return thread.terminal.readPlain(lines);
   }
 
   create(input: { name?: string; cwd: string }): CodexThreadSummary {
     const id = randomUUID();
     const now = new Date();
-    const screen = new HeadlessTerminal({ cols: 100, rows: 30, allowProposedApi: true });
-    const serializer = new SerializeAddon();
-    screen.loadAddon(serializer as unknown as Parameters<HeadlessTerminalInstance["loadAddon"]>[0]);
     const thread: ManagedThread = {
       id,
       name: input.name?.trim() || `Codex ${this.threads.size + 1}`,
       cwd: input.cwd,
       state: "starting",
-      screen,
-      serializer,
-      screenWriteQueue: Promise.resolve(),
-      rawBuffer: "",
-      plainBuffer: "",
+      terminal: new TerminalScreen(100, 30),
       createdAt: now,
       updatedAt: now
     };
@@ -126,7 +104,6 @@ export class PtyThreadManager extends EventEmitter {
 
       proc.onData((data) => {
         this.append(thread, data);
-        this.emit("delta", { threadId: thread.id, data } satisfies TerminalDelta);
       });
 
       proc.onExit((event) => {
@@ -141,7 +118,6 @@ export class PtyThreadManager extends EventEmitter {
       const errorOutput = `\r\nVoice Codex failed to start Codex CLI:\r\n${thread.error}\r\n`;
       this.append(thread, errorOutput);
       thread.updatedAt = new Date();
-      this.emit("delta", { threadId: thread.id, data: errorOutput } satisfies TerminalDelta);
       this.emit("thread", this.toSummary(thread));
     }
 
@@ -166,6 +142,10 @@ export class PtyThreadManager extends EventEmitter {
     }
 
     thread.process?.kill();
+    if (thread.frameTimer) {
+      clearTimeout(thread.frameTimer);
+      thread.frameTimer = undefined;
+    }
     thread.state = "exited";
     thread.updatedAt = new Date();
     this.emit("thread", this.toSummary(thread));
@@ -179,7 +159,8 @@ export class PtyThreadManager extends EventEmitter {
     }
 
     thread.process.resize(Math.max(20, cols), Math.max(5, rows));
-    thread.screen.resize(Math.max(20, cols), Math.max(5, rows));
+    thread.terminal.resize(cols, rows);
+    this.scheduleFrame(thread);
     return true;
   }
 
@@ -198,17 +179,41 @@ export class PtyThreadManager extends EventEmitter {
   }
 
   private append(thread: ManagedThread, data: string): void {
-    thread.screenWriteQueue = thread.screenWriteQueue
-      .catch(() => undefined)
-      .then(
-        () =>
-          new Promise<void>((resolve) => {
-            thread.screen.write(data, resolve);
-          })
-      );
-    thread.rawBuffer = limitBuffer(thread.rawBuffer + data, this.config.scrollbackLimit);
-    thread.plainBuffer = limitBuffer(stripAnsi(thread.rawBuffer), this.config.scrollbackLimit);
+    thread.terminal
+      .write(data)
+      .then(() => {
+        this.scheduleFrame(thread);
+      })
+      .catch((error: unknown) => {
+        thread.error = error instanceof Error ? error.message : String(error);
+        thread.state = "error";
+        this.emit("thread", this.toSummary(thread));
+      });
     thread.updatedAt = new Date();
+  }
+
+  private scheduleFrame(thread: ManagedThread): void {
+    if (thread.frameTimer) {
+      return;
+    }
+
+    thread.frameTimer = setTimeout(() => {
+      thread.frameTimer = undefined;
+      this.emitFrame(thread);
+    }, FRAME_INTERVAL_MS);
+  }
+
+  private emitFrame(thread: ManagedThread): void {
+    thread.terminal
+      .nextFrame(thread.id)
+      .then((frame) => {
+        this.emit("frame", frame);
+      })
+      .catch((error: unknown) => {
+        thread.error = error instanceof Error ? error.message : String(error);
+        thread.state = "error";
+        this.emit("thread", this.toSummary(thread));
+      });
   }
 
   private toSummary(thread: ManagedThread): CodexThreadSummary {
@@ -245,26 +250,4 @@ function quoteShellPart(value: string): string {
   }
 
   return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-function limitBuffer(value: string, maxLength: number): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return value.slice(value.length - maxLength);
-}
-
-function renderedPlainText(screen: HeadlessTerminalInstance): string {
-  const buffer = screen.buffer.active;
-  const lines: string[] = [];
-  for (let row = 0; row < buffer.length; row += 1) {
-    lines.push(buffer.getLine(row)?.translateToString(true) ?? "");
-  }
-
-  while (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
-  return lines.join("\n");
 }

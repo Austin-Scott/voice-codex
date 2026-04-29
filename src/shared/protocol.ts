@@ -62,11 +62,21 @@ export interface KeystrokeProposal {
   resolvedAt?: string;
 }
 
-export interface TerminalSnapshotEvent {
-  type: "terminal.snapshot";
+export interface TerminalFramePayload {
   threadId: string;
+  sequence: number;
+  cols: number;
+  rows: number;
   data: string;
   plainText: string;
+}
+
+export interface TerminalSnapshotEvent extends TerminalFramePayload {
+  type: "terminal.snapshot";
+}
+
+export interface TerminalFrameEvent extends TerminalFramePayload {
+  type: "terminal.frame";
 }
 
 export interface TerminalDeltaEvent {
@@ -108,6 +118,7 @@ export interface ErrorEvent {
 
 export type ServerEvent =
   | TerminalSnapshotEvent
+  | TerminalFrameEvent
   | TerminalDeltaEvent
   | ThreadStatusEvent
   | ThreadsEvent

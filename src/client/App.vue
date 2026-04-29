@@ -7,7 +7,8 @@ import type {
   DirectoryListing,
   KeystrokeProposal,
   ServerEvent,
-  SessionResponse
+  SessionResponse,
+  TerminalFramePayload
 } from "@shared/protocol";
 import {
   browseDirectories,
@@ -34,6 +35,7 @@ import {
 } from "./pedal";
 import { RealtimeVoiceAgent } from "./realtime";
 import { VoiceCodexSocket } from "./socket";
+import { shouldRenderTerminalFrame } from "./terminalFrames";
 
 const session = ref<SessionResponse | undefined>();
 const errorMessage = ref("");
@@ -67,6 +69,7 @@ let agentPressed = false;
 let whisperRecorder: MediaRecorder | undefined;
 let whisperStream: MediaStream | undefined;
 let whisperChunks: Blob[] = [];
+const lastFrameSequences = new Map<string, number>();
 
 const isController = computed(() => Boolean(session.value?.isController));
 const activeThread = computed(() => threads.value.find((thread) => thread.id === activeThreadId.value));
@@ -302,16 +305,16 @@ function handleServerEvent(event: ServerEvent): void {
   }
 
   if (event.type === "terminal.delta") {
-    if (event.threadId === activeThreadId.value) {
-      writeTerminal(event.data);
-    }
     return;
   }
 
   if (event.type === "terminal.snapshot") {
-    if (event.threadId === activeThreadId.value) {
-      renderTerminalSnapshot(event.data);
-    }
+    renderTerminalFrame(event);
+    return;
+  }
+
+  if (event.type === "terminal.frame") {
+    renderTerminalFrame(event);
     return;
   }
 
@@ -347,6 +350,7 @@ async function createNewThread(): Promise<void> {
     });
     upsertThread(response.thread);
     activeThreadId.value = response.thread.id;
+    terminal?.reset();
     await loadThreadSnapshot(response.thread.id);
     folderPickerOpen.value = false;
   } catch (error) {
@@ -393,6 +397,7 @@ async function chooseThread(threadId: string): Promise<void> {
   try {
     await selectThread(threadId);
     activeThreadId.value = threadId;
+    terminal?.reset();
     await loadThreadSnapshot(threadId);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
@@ -428,17 +433,25 @@ function requestSnapshot(threadId: string): void {
 async function loadThreadSnapshot(threadId: string): Promise<void> {
   try {
     const snapshot = await getTerminalSnapshot(threadId);
-    if (snapshot.threadId === activeThreadId.value) {
-      renderTerminalSnapshot(snapshot.data);
-    }
+    renderTerminalFrame(snapshot);
   } catch {
     requestSnapshot(threadId);
   }
 }
 
-function renderTerminalSnapshot(data: string): void {
+function renderTerminalFrame(frame: TerminalFramePayload): void {
+  if (frame.threadId !== activeThreadId.value) {
+    return;
+  }
+
+  const previousSequence = lastFrameSequences.get(frame.threadId);
+  if (!shouldRenderTerminalFrame(previousSequence, frame.sequence)) {
+    return;
+  }
+
+  lastFrameSequences.set(frame.threadId, frame.sequence);
   terminal?.reset();
-  writeTerminal(data);
+  writeTerminal(frame.data);
 }
 
 function sendTerminal(data: string): void {
