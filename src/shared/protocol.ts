@@ -13,9 +13,10 @@ export interface CodexThreadSummary {
 }
 
 export interface PairingInfo {
-  pin: string;
-  url: string;
-  qrDataUrl: string;
+  controllerUrl?: string;
+  qrDataUrl?: string;
+  qrDisplayUrl: string;
+  localControllerUrl?: string;
 }
 
 export interface SessionResponse {

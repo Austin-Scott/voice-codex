@@ -25,15 +25,17 @@ input {
   min-height: 100%;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 18px;
   background: linear-gradient(120deg, #101412, #201b17);
 }
 
 .pairing-panel {
-  width: min(440px, 100%);
+  width: min(94vmin, 820px);
+  min-height: min(96vh, 900px);
   display: grid;
-  gap: 18px;
-  padding: 28px;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  gap: 14px;
+  padding: clamp(16px, 2.4vmin, 28px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   background: rgba(14, 18, 21, 0.92);
@@ -41,27 +43,28 @@ input {
 }
 
 .pairing-qr {
-  width: 220px;
-  height: 220px;
+  width: min(76vmin, 620px);
+  height: min(76vmin, 620px);
   justify-self: center;
+  align-self: center;
   border-radius: 8px;
   background: #fff;
 }
 
-.pin-readout {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
-}
-
-.pin-readout span {
-  display: grid;
-  place-items: center;
-  height: 48px;
+.pairing-url {
+  min-width: 0;
+  padding: 10px 12px;
   border-radius: 6px;
   background: #1c252a;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  font: 700 1.5rem/1 "Cascadia Mono", Consolas, monospace;
+  color: #c9d7df;
+  font: 0.86rem/1.4 "Cascadia Mono", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.qr-host-form {
+  display: grid;
+  gap: 4px;
 }
 
 .app-shell {

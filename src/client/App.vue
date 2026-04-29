@@ -28,7 +28,6 @@ import { RealtimeVoiceAgent } from "./realtime";
 import { VoiceCodexSocket } from "./socket";
 
 const session = ref<SessionResponse | undefined>();
-const pinInput = ref("");
 const errorMessage = ref("");
 const statusMessage = ref("Loading");
 const wsStatus = ref<"open" | "closed">("closed");
@@ -41,6 +40,7 @@ const newThreadName = ref("");
 const newThreadCwd = ref(".");
 const terminalElement = ref<HTMLDivElement | null>(null);
 const captureBinding = ref<keyof PedalBindings | undefined>();
+const qrHostInput = ref("");
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
 let socket: VoiceCodexSocket | undefined;
@@ -78,10 +78,10 @@ onBeforeUnmount(() => {
 async function loadSession(): Promise<void> {
   errorMessage.value = "";
   session.value = await getSession();
-  const pinFromUrl = new URLSearchParams(window.location.search).get("pin");
-  if (pinFromUrl && !session.value.isController) {
-    pinInput.value = pinFromUrl;
-    await submitPin();
+  syncQrHostInput();
+  const pairToken = new URLSearchParams(window.location.search).get("pair");
+  if (pairToken && !session.value.isController) {
+    await submitPairToken(pairToken);
     window.history.replaceState({}, document.title, window.location.pathname);
     return;
   }
@@ -93,12 +93,23 @@ async function loadSession(): Promise<void> {
   }
 }
 
-async function submitPin(): Promise<void> {
+async function submitPairToken(token: string): Promise<void> {
   try {
     errorMessage.value = "";
-    await pair(pinInput.value);
+    await pair(token);
     session.value = await getSession();
+    syncQrHostInput();
     await initializeController();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function refreshPairingQr(): Promise<void> {
+  try {
+    errorMessage.value = "";
+    session.value = await getSession(qrHostInput.value);
+    syncQrHostInput();
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
   }
@@ -440,6 +451,18 @@ function loadPedalBindings(): PedalBindings {
 function savePedalBindings(value: PedalBindings): void {
   window.localStorage.setItem("voice-codex-pedal-bindings", JSON.stringify(value));
 }
+
+function syncQrHostInput(): void {
+  if (!session.value?.pairing.controllerUrl) {
+    return;
+  }
+
+  try {
+    qrHostInput.value = new URL(session.value.pairing.controllerUrl).host;
+  } catch {
+    // Leave user input as-is if the URL cannot be parsed.
+  }
+}
 </script>
 
 <template>
@@ -447,10 +470,7 @@ function savePedalBindings(value: PedalBindings): void {
     <section class="pairing-panel">
       <div>
         <p class="text-uppercase small text-secondary mb-2">Voice Codex</p>
-        <h1 class="h3 mb-3">Pair this browser</h1>
-        <p class="text-secondary mb-4">
-          Scan the QR code from the controller device or enter the current server PIN.
-        </p>
+        <h1 class="h3 mb-3">Pair a controller</h1>
       </div>
 
       <img
@@ -460,22 +480,22 @@ function savePedalBindings(value: PedalBindings): void {
         alt="Pairing QR code"
       />
 
-      <div class="pin-readout">
-        <span v-for="(digit, index) in session?.pairing.pin ?? '------'" :key="index">{{
-          digit
-        }}</span>
+      <div v-if="session?.pairing.controllerUrl" class="pairing-url">
+        {{ session.pairing.controllerUrl }}
       </div>
 
-      <form class="d-flex gap-2" @submit.prevent="submitPin">
-        <input
-          v-model="pinInput"
-          class="form-control form-control-lg"
-          inputmode="numeric"
-          autocomplete="one-time-code"
-          placeholder="PIN"
-        />
-        <button class="btn btn-primary btn-lg" type="submit">Pair</button>
+      <form v-if="session?.pairing.controllerUrl" class="qr-host-form" @submit.prevent="refreshPairingQr">
+        <label class="form-label mb-1" for="qr-host">QR host</label>
+        <div class="input-group">
+          <input id="qr-host" v-model="qrHostInput" class="form-control" autocomplete="off" />
+          <button class="btn btn-outline-light" type="submit">Update</button>
+        </div>
       </form>
+
+      <div v-else class="alert alert-secondary mb-0">
+        Open <code>{{ session?.pairing.qrDisplayUrl }}</code> on the server host to display the
+        pairing QR code.
+      </div>
 
       <div v-if="errorMessage" class="alert alert-danger mb-0">{{ errorMessage }}</div>
     </section>

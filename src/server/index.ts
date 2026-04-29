@@ -44,10 +44,10 @@ app.get(
 );
 
 app.post("/api/pair", (req, res) => {
-  const pin = String(req.body?.pin ?? "");
-  const sessionId = pairing.pair(pin);
+  const token = String(req.body?.token ?? "");
+  const sessionId = pairing.pair(token);
   if (!sessionId) {
-    res.status(401).json({ error: "Invalid PIN" });
+    res.status(401).json({ error: "Invalid pairing token" });
     return;
   }
 
@@ -264,13 +264,12 @@ proposals.on("resolved", (proposal) => {
 });
 
 server.listen(config.port, config.host, () => {
-  const urls = getServerUrls(config.port);
+  const qrDisplayUrl = getQrDisplayUrl(config.port);
+  const localControllerUrl = getLocalControllerUrl(config.port);
   console.log(`Voice Codex listening on HTTPS port ${config.port}`);
-  console.log(`Pairing PIN: ${pairing.getPin()}`);
   console.log(`Certificate files: ${certificatePaths(config)}${certs.generated ? " (generated)" : ""}`);
-  for (const url of urls) {
-    console.log(`Open ${url}`);
-  }
+  console.log(`Show QR for remote controller: ${qrDisplayUrl}`);
+  console.log(`Pair local browser immediately: ${localControllerUrl}`);
 });
 
 function handleClientEvent(ws: WebSocket, raw: string): void {
@@ -347,14 +346,15 @@ function getSessionIdFromHeader(header: string | undefined): string | undefined 
 }
 
 async function buildPairingInfo(req: Request) {
-  const host = req.get("host") ?? `localhost:${config.port}`;
-  const url = new URL(`https://${host}/`);
-  url.searchParams.set("pin", pairing.getPin());
+  const controllerUrl = canDisplayPairingQr(req) ? getRemoteControllerUrl(req) : undefined;
 
   return {
-    pin: pairing.getPin(),
-    url: url.toString(),
-    qrDataUrl: await QRCode.toDataURL(url.toString(), { margin: 1, width: 260 })
+    controllerUrl,
+    qrDataUrl: controllerUrl
+      ? await QRCode.toDataURL(controllerUrl, { margin: 1, width: 900 })
+      : undefined,
+    qrDisplayUrl: getQrDisplayUrl(config.port),
+    localControllerUrl: canDisplayPairingQr(req) ? getLocalControllerUrl(config.port) : undefined
   };
 }
 
@@ -378,14 +378,112 @@ function asyncHandler(
   };
 }
 
-function getServerUrls(port: number): string[] {
-  const urls = [`https://localhost:${port}/`];
+function getQrDisplayUrl(port: number): string {
+  return `https://localhost:${port}/pair`;
+}
+
+function getLocalControllerUrl(port: number): string {
+  const url = new URL(`https://localhost:${port}/`);
+  url.searchParams.set("pair", pairing.getToken());
+  return url.toString();
+}
+
+function getRemoteControllerUrl(req: Request): string {
+  const requestedHost = normalizePairHost(req.query.pairHost, config.port);
+  if (requestedHost) {
+    return withPairingToken(requestedHost);
+  }
+
+  const publicUrl = process.env.VOICE_CODEX_PUBLIC_URL?.trim();
+  if (publicUrl) {
+    return withPairingToken(publicUrl);
+  }
+
+  const requestHost = req.get("host");
+  if (requestHost && !isLoopbackHost(requestHost)) {
+    return withPairingToken(`https://${requestHost}/`);
+  }
+
+  const remoteHost = getPreferredRemoteHost(config.port);
+  return withPairingToken(`https://${remoteHost}/`);
+}
+
+function withPairingToken(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  url.pathname = "/";
+  url.searchParams.set("pair", pairing.getToken());
+  return url.toString();
+}
+
+function getPreferredRemoteHost(port: number): string {
+  const candidates: string[] = [];
   for (const interfaces of Object.values(os.networkInterfaces())) {
     for (const item of interfaces ?? []) {
       if (item.family === "IPv4" && !item.internal) {
-        urls.push(`https://${item.address}:${port}/`);
+        candidates.push(item.address);
       }
     }
   }
-  return urls;
+
+  const lanAddress = candidates.find(is192168Address) ?? candidates.find(isPrivateLanAddress);
+  return `${lanAddress ?? candidates[0] ?? "localhost"}:${port}`;
+}
+
+function normalizePairHost(value: unknown, port: number): string | undefined {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const raw = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    url.protocol = "https:";
+    if (!url.port && !raw.match(/:\d+(?:\/|$)/)) {
+      url.port = String(port);
+    }
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function is192168Address(address: string): boolean {
+  return address.startsWith("192.168.");
+}
+
+function isPrivateLanAddress(address: string): boolean {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
+    return false;
+  }
+
+  const [first, second] = parts;
+  return first === 10 || (first === 172 && second >= 16 && second <= 31) || first === 192 && second === 168;
+}
+
+function canDisplayPairingQr(req: Request): boolean {
+  const host = req.get("host");
+  if (!host) {
+    return true;
+  }
+
+  return isLoopbackHost(host);
+}
+
+function isLoopbackHost(host: string): boolean {
+  const hostname = extractHostname(host).toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function extractHostname(host: string): string {
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end >= 0 ? host.slice(1, end) : host;
+  }
+
+  return host.split(":")[0] ?? host;
 }

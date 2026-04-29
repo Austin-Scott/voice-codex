@@ -1,14 +1,19 @@
 import type { CodexThreadSummary, KeystrokeProposal, SessionResponse } from "@shared/protocol";
 
-export async function getSession(): Promise<SessionResponse> {
-  return request<SessionResponse>("/api/session");
+export async function getSession(pairHost?: string): Promise<SessionResponse> {
+  const params = new URLSearchParams();
+  if (pairHost?.trim()) {
+    params.set("pairHost", pairHost.trim());
+  }
+
+  return request<SessionResponse>(`/api/session${params.size ? `?${params}` : ""}`);
 }
 
-export async function pair(pin: string): Promise<void> {
+export async function pair(token: string): Promise<void> {
   await request("/api/pair", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pin })
+    body: JSON.stringify({ token })
   });
 }
 

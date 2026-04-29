@@ -1,13 +1,13 @@
-import crypto from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 export const SESSION_COOKIE = "voice_codex_session";
 
 export class PairingManager {
-  private pin = createPin();
+  private token = randomUUID();
   private activeSessionId: string | undefined;
 
-  getPin(): string {
-    return this.pin;
+  getToken(): string {
+    return this.token;
   }
 
   hasController(): boolean {
@@ -18,17 +18,13 @@ export class PairingManager {
     return Boolean(sessionId && this.activeSessionId === sessionId);
   }
 
-  pair(pin: string): string | undefined {
-    if (pin.replace(/\D/g, "") !== this.pin) {
+  pair(token: string): string | undefined {
+    if (token !== this.token) {
       return undefined;
     }
 
-    this.activeSessionId = crypto.randomUUID();
-    this.pin = createPin();
+    this.activeSessionId = randomUUID();
+    this.token = randomUUID();
     return this.activeSessionId;
   }
-}
-
-function createPin(): string {
-  return crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
 }
