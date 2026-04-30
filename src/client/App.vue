@@ -956,8 +956,15 @@ function releaseOverlayPtt(): void {
       <div ref="terminalElement" class="terminal-container"></div>
 
       <div v-if="touchOverlayEnabled" class="touch-overlay" aria-label="Terminal touch controls">
-        <div class="touch-overlay-layout">
-          <div class="touch-cluster touch-dpad">
+        <div class="touch-zone touch-number-row">
+          <button class="touch-key touch-key-small" type="button" aria-label="1" @click="sendTerminal('1')">1</button>
+          <button class="touch-key touch-key-small" type="button" aria-label="2" @click="sendTerminal('2')">2</button>
+          <button class="touch-key touch-key-small" type="button" aria-label="3" @click="sendTerminal('3')">3</button>
+          <button class="touch-key touch-key-small" type="button" aria-label="4" @click="sendTerminal('4')">4</button>
+        </div>
+
+        <div class="touch-zone touch-left-controls">
+          <div class="touch-dpad">
             <span aria-hidden="true"></span>
             <button class="touch-key" type="button" aria-label="Up" @click="sendTerminal('\u001b[A')">
               <i class="bi bi-arrow-up" aria-hidden="true"></i>
@@ -966,9 +973,7 @@ function releaseOverlayPtt(): void {
             <button class="touch-key" type="button" aria-label="Left" @click="sendTerminal('\u001b[D')">
               <i class="bi bi-arrow-left" aria-hidden="true"></i>
             </button>
-            <button class="touch-key touch-key-text" type="button" aria-label="Enter" @click="sendTerminal('\r')">
-              Enter
-            </button>
+            <span aria-hidden="true"></span>
             <button class="touch-key" type="button" aria-label="Right" @click="sendTerminal('\u001b[C')">
               <i class="bi bi-arrow-right" aria-hidden="true"></i>
             </button>
@@ -978,57 +983,58 @@ function releaseOverlayPtt(): void {
             </button>
             <span aria-hidden="true"></span>
           </div>
+          <button
+            class="touch-key touch-ptt"
+            :class="{ pressed: overlayPtt === 'whisper' }"
+            type="button"
+            @pointerdown.prevent="handleOverlayPttDown('whisper', $event)"
+            @pointerup.prevent="handleOverlayPttUp('whisper', $event)"
+            @pointercancel.prevent="handleOverlayPttUp('whisper', $event)"
+            @lostpointercapture="releaseOverlayPtt"
+          >
+            <i class="bi bi-keyboard" aria-hidden="true"></i>
+            Whisper
+          </button>
+        </div>
 
-          <div class="touch-cluster touch-keypad">
+        <div class="touch-zone touch-center-controls">
+          <button class="touch-key touch-key-small" type="button" aria-label="Tab" @click="sendTerminal('\t')">
+            Tab
+          </button>
+          <button
+            class="touch-key touch-key-small"
+            type="button"
+            aria-label="Backspace"
+            @click="sendTerminal('\u007f')"
+          >
+            Bksp
+          </button>
+          <button class="touch-key touch-key-small touch-space-key" type="button" aria-label="Space" @click="sendTerminal(' ')">
+            Space
+          </button>
+        </div>
+
+        <div class="touch-zone touch-right-controls">
+          <div class="touch-command-row">
+            <button class="touch-key touch-key-text" type="button" aria-label="Enter" @click="sendTerminal('\r')">
+              Enter
+            </button>
             <button class="touch-key touch-key-text" type="button" aria-label="Escape" @click="sendTerminal('\u001b')">
               Esc
             </button>
-            <button class="touch-key touch-key-text" type="button" aria-label="Tab" @click="sendTerminal('\t')">
-              Tab
-            </button>
-            <button
-              class="touch-key touch-key-text"
-              type="button"
-              aria-label="Backspace"
-              @click="sendTerminal('\u007f')"
-            >
-              Bksp
-            </button>
-            <button class="touch-key touch-key-text" type="button" aria-label="Space" @click="sendTerminal(' ')">
-              Space
-            </button>
-            <button class="touch-key touch-key-text" type="button" aria-label="1" @click="sendTerminal('1')">1</button>
-            <button class="touch-key touch-key-text" type="button" aria-label="2" @click="sendTerminal('2')">2</button>
-            <button class="touch-key touch-key-text" type="button" aria-label="3" @click="sendTerminal('3')">3</button>
-            <button class="touch-key touch-key-text" type="button" aria-label="4" @click="sendTerminal('4')">4</button>
           </div>
-
-          <div class="touch-cluster touch-ptt-row">
-            <button
-              class="touch-key touch-ptt"
-              :class="{ pressed: overlayPtt === 'whisper' }"
-              type="button"
-              @pointerdown.prevent="handleOverlayPttDown('whisper', $event)"
-              @pointerup.prevent="handleOverlayPttUp('whisper', $event)"
-              @pointercancel.prevent="handleOverlayPttUp('whisper', $event)"
-              @lostpointercapture="releaseOverlayPtt"
-            >
-              <i class="bi bi-keyboard" aria-hidden="true"></i>
-              Whisper
-            </button>
-            <button
-              class="touch-key touch-ptt"
-              :class="{ pressed: overlayPtt === 'agent' }"
-              type="button"
-              @pointerdown.prevent="handleOverlayPttDown('agent', $event)"
-              @pointerup.prevent="handleOverlayPttUp('agent', $event)"
-              @pointercancel.prevent="handleOverlayPttUp('agent', $event)"
-              @lostpointercapture="releaseOverlayPtt"
-            >
-              <i class="bi bi-mic-fill" aria-hidden="true"></i>
-              Agent
-            </button>
-          </div>
+          <button
+            class="touch-key touch-ptt"
+            :class="{ pressed: overlayPtt === 'agent' }"
+            type="button"
+            @pointerdown.prevent="handleOverlayPttDown('agent', $event)"
+            @pointerup.prevent="handleOverlayPttUp('agent', $event)"
+            @pointercancel.prevent="handleOverlayPttUp('agent', $event)"
+            @lostpointercapture="releaseOverlayPtt"
+          >
+            <i class="bi bi-mic-fill" aria-hidden="true"></i>
+            Agent
+          </button>
         </div>
       </div>
 
