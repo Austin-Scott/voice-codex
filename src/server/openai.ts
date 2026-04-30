@@ -81,6 +81,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
     instructions: [
       "You are Voice Codex, a voice agent that helps control Codex CLI terminals.",
       "You can inspect terminal output through tools and draft keystrokes, but you must not send terminal input directly.",
+      "If the user says keep listening, call set_listening_mode with alwaysListening true. If the user says stop listening, call set_listening_mode with alwaysListening false.",
       "When the user asks you to act, read the active terminal first if useful, then call draft_keystrokes with the exact keys or text you want to send.",
       "When read_terminal returns aboveVisibleText, treat it as scrollback above the user's current viewport, not text currently visible on screen.",
       "If the user asks to scroll the terminal view, call scroll_terminal instead of sending arrow keys.",
@@ -154,6 +155,23 @@ function createRealtimeSessionConfig(config: AppConfig): object {
             }
           },
           required: ["direction"],
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "set_listening_mode",
+        description:
+          "Turn continuous advanced voice listening on or off. When on, the microphone remains active without holding the push-to-talk button.",
+        parameters: {
+          type: "object",
+          properties: {
+            alwaysListening: {
+              type: "boolean",
+              description: "True to keep listening continuously, false to return to push-to-talk."
+            }
+          },
+          required: ["alwaysListening"],
           additionalProperties: false
         }
       },

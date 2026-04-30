@@ -56,6 +56,7 @@ const directoryListing = ref<DirectoryListing | undefined>();
 const newDirectoryName = ref("");
 const touchOverlayEnabled = ref(loadTouchOverlayEnabled());
 const overlayPtt = ref<"agent" | "whisper" | undefined>();
+const alwaysListening = ref(false);
 const fullscreenActive = ref(Boolean(document.fullscreenElement));
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
@@ -167,6 +168,7 @@ function setupVoiceAgent(): void {
       getPendingProposals: () => pendingProposals.value,
       getTerminalContext,
       scrollTerminal,
+      setAlwaysListening,
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
         void loadThreadSnapshot(threadId);
@@ -462,8 +464,11 @@ async function startAgentPushToTalk(): Promise<void> {
   try {
     clearAgentIdleTimer();
     await voiceAgent?.ensureConnected();
-    if (agentPressed) {
+    if (agentPressed || alwaysListening.value) {
       voiceAgent?.setListening(true);
+      if (alwaysListening.value) {
+        agentStatus.value = "Voice agent always listening";
+      }
     }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
@@ -478,15 +483,25 @@ function handleAgentDown(): void {
 
 function handleAgentUp(): void {
   agentPressed = false;
-  voiceAgent?.setListening(false);
-  scheduleAgentIdleDisconnect();
+  if (alwaysListening.value) {
+    voiceAgent?.setListening(true);
+    agentStatus.value = "Voice agent always listening";
+  } else {
+    voiceAgent?.setListening(false);
+    scheduleAgentIdleDisconnect();
+  }
 }
 
 function scheduleAgentIdleDisconnect(): void {
+  if (alwaysListening.value) {
+    clearAgentIdleTimer();
+    return;
+  }
+
   clearAgentIdleTimer();
   agentIdleTimer = window.setTimeout(() => {
     agentIdleTimer = undefined;
-    if (!agentPressed) {
+    if (!agentPressed && !alwaysListening.value) {
       voiceAgent?.disconnect();
     }
   }, 120_000);
@@ -775,6 +790,33 @@ function scrollTerminal(input: { direction: string; lines?: number }): TerminalC
   }
 
   return getTerminalContext(120);
+}
+
+async function setAlwaysListening(enabled: boolean): Promise<{ alwaysListening: boolean }> {
+  alwaysListening.value = enabled;
+  clearAgentIdleTimer();
+
+  if (enabled) {
+    try {
+      await voiceAgent?.ensureConnected();
+      voiceAgent?.setListening(true);
+      agentStatus.value = "Voice agent always listening";
+    } catch (error) {
+      alwaysListening.value = false;
+      errorMessage.value = error instanceof Error ? error.message : String(error);
+    }
+  } else if (agentPressed) {
+    voiceAgent?.setListening(true);
+  } else {
+    voiceAgent?.setListening(false);
+    scheduleAgentIdleDisconnect();
+  }
+
+  return { alwaysListening: alwaysListening.value };
+}
+
+function onAlwaysListeningChange(): void {
+  void setAlwaysListening(alwaysListening.value);
 }
 
 async function requestWakeLock(): Promise<void> {
@@ -1144,6 +1186,15 @@ function releaseOverlayPtt(): void {
               class="form-check-input"
               type="checkbox"
               @change="saveTouchOverlayEnabled"
+            />
+          </label>
+          <label class="touch-toggle">
+            <span>Always listen</span>
+            <input
+              v-model="alwaysListening"
+              class="form-check-input"
+              type="checkbox"
+              @change="onAlwaysListeningChange"
             />
           </label>
           <button class="btn btn-outline-light w-100" type="button" @click="toggleFullscreen">

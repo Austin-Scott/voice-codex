@@ -43,6 +43,7 @@ export interface RealtimeToolsState {
   getPendingProposals: () => KeystrokeProposal[];
   getTerminalContext: (aboveVisibleLines: number) => TerminalContext;
   scrollTerminal: (input: { direction: string; lines?: number }) => TerminalContext;
+  setAlwaysListening: (enabled: boolean) => Promise<{ alwaysListening: boolean }>;
   setActiveThread: (threadId: string) => void;
   setThreads: (threads: CodexThreadSummary[], activeThreadId?: string) => void;
   showDirectoryListing: (listing: DirectoryListing) => void;
@@ -228,6 +229,10 @@ export class RealtimeVoiceAgent {
         direction: String(args.direction ?? ""),
         lines: typeof args.lines === "number" ? args.lines : undefined
       });
+    }
+
+    if (name === "set_listening_mode") {
+      return this.toolsState.setAlwaysListening(Boolean(args.alwaysListening));
     }
 
     if (name === "draft_keystrokes") {
