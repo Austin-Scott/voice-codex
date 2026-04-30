@@ -17,6 +17,12 @@ import { PairingManager, SESSION_COOKIE } from "./pairing.js";
 import { ProposalManager } from "./proposals.js";
 import { PtyThreadManager } from "./ptyManager.js";
 
+interface HeartbeatWebSocket extends WebSocket {
+  isAlive?: boolean;
+}
+
+const WS_HEARTBEAT_INTERVAL_MS = 30_000;
+
 const config = loadConfig();
 const app = express();
 const pairing = new PairingManager();
@@ -263,7 +269,7 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
 const certs = ensureCertificate(config);
 const server = https.createServer({ cert: certs.cert, key: certs.key }, app);
 const wss = new WebSocketServer({ noServer: true });
-const sockets = new Set<WebSocket>();
+const sockets = new Set<HeartbeatWebSocket>();
 
 server.on("upgrade", (req, socket, head) => {
   const url = new URL(req.url ?? "/", `https://${req.headers.host ?? "localhost"}`);
@@ -283,8 +289,14 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (socket) => {
+  const ws = socket as HeartbeatWebSocket;
+  ws.isAlive = true;
   sockets.add(ws);
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
+
   send(ws, {
     type: "threads",
     threads: threads.list(),
@@ -301,6 +313,25 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     sockets.delete(ws);
   });
+});
+
+const heartbeatTimer = setInterval(() => {
+  for (const ws of sockets) {
+    if (ws.isAlive === false) {
+      sockets.delete(ws);
+      ws.terminate();
+      continue;
+    }
+
+    if (ws.readyState === ws.OPEN) {
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }
+}, WS_HEARTBEAT_INTERVAL_MS);
+
+wss.on("close", () => {
+  clearInterval(heartbeatTimer);
 });
 
 threads.on("frame", (frame) => {

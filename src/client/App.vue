@@ -73,6 +73,7 @@ let whisperStream: MediaStream | undefined;
 let whisperChunks: Blob[] = [];
 let agentIdleTimer: ReturnType<typeof window.setTimeout> | undefined;
 let wakeLock: MinimalWakeLockSentinel | undefined;
+let pageWasHidden = document.visibilityState === "hidden";
 const lastFrameSequences = new Map<string, number>();
 
 const isController = computed(() => Boolean(session.value?.isController));
@@ -86,6 +87,9 @@ onMounted(async () => {
   window.addEventListener("keyup", handleKeyUp, true);
   document.addEventListener("fullscreenchange", handleFullscreenChange);
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("focus", handleWindowFocus);
+  window.addEventListener("online", handleWindowOnline);
+  window.addEventListener("pageshow", handlePageShow);
   window.addEventListener("pointerdown", handleWakeLockGesture, { passive: true });
   await loadSession();
 });
@@ -95,6 +99,9 @@ onBeforeUnmount(() => {
   window.removeEventListener("keyup", handleKeyUp, true);
   document.removeEventListener("fullscreenchange", handleFullscreenChange);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
+  window.removeEventListener("focus", handleWindowFocus);
+  window.removeEventListener("online", handleWindowOnline);
+  window.removeEventListener("pageshow", handlePageShow);
   window.removeEventListener("pointerdown", handleWakeLockGesture);
   resizeObserver?.disconnect();
   pedal?.dispose();
@@ -230,6 +237,9 @@ function connectSocket(): void {
     (status) => {
       wsStatus.value = status;
       if (status === "open" && activeThreadId.value) {
+        if (errorMessage.value === "Controller is reconnecting. Try again in a moment.") {
+          errorMessage.value = "";
+        }
         void loadThreadSnapshot(activeThreadId.value);
       }
     },
@@ -459,7 +469,9 @@ function sendTerminal(data: string): void {
     errorMessage.value = "Create or select a Codex thread first.";
     return;
   }
-  socket?.send({ type: "terminal.input", threadId: activeThreadId.value, data });
+  if (!socket?.send({ type: "terminal.input", threadId: activeThreadId.value, data })) {
+    errorMessage.value = "Controller is reconnecting. Try again in a moment.";
+  }
 }
 
 async function pasteClipboardToTerminal(): Promise<void> {
@@ -721,8 +733,41 @@ function handleFullscreenChange(): void {
 }
 
 function handleVisibilityChange(): void {
-  if (document.visibilityState === "visible") {
-    void requestWakeLock();
+  if (document.visibilityState === "hidden") {
+    pageWasHidden = true;
+    return;
+  }
+
+  void requestWakeLock();
+  resumeControllerConnection(pageWasHidden);
+  pageWasHidden = false;
+}
+
+function handleWindowFocus(): void {
+  resumeControllerConnection(false);
+}
+
+function handleWindowOnline(): void {
+  resumeControllerConnection(true);
+}
+
+function handlePageShow(event: PageTransitionEvent): void {
+  resumeControllerConnection(event.persisted);
+}
+
+function resumeControllerConnection(forceReconnect: boolean): void {
+  if (!isController.value || !socket) {
+    return;
+  }
+
+  if (forceReconnect) {
+    socket.reconnectNow();
+  } else {
+    socket.connect();
+  }
+
+  if (activeThreadId.value) {
+    void loadThreadSnapshot(activeThreadId.value);
   }
 }
 
