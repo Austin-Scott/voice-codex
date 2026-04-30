@@ -4,6 +4,7 @@ const STATIC_KEY_MAP: Record<string, string> = {
   ENTER: "\r",
   ESC: "\u001b",
   TAB: "\t",
+  SPACE: " ",
   SHIFT_TAB: "\u001b[Z",
   BACKSPACE: "\u007f",
   UP: "\u001b[A",
@@ -133,6 +134,9 @@ function normalizeKeyName(value: string): string | undefined {
   }
   if (name === "SHIFTTAB") {
     return "SHIFT_TAB";
+  }
+  if (name === "SPACEBAR" || name === "SPACE_BAR") {
+    return "SPACE";
   }
   if (name === "PGUP") {
     return "PAGE_UP";

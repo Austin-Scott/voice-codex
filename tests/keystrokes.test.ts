@@ -15,9 +15,10 @@ describe("keystrokes", () => {
         "<CTRL_C>",
         "<CTRL_J>",
         "<CTRL_U>",
+        "<SPACE>",
         "<SHIFT_TAB>"
       ])
-    ).toBe("hello\r\u001b\u0003\n\u0015\u001b[Z");
+    ).toBe("hello\r\u001b\u0003\n\u0015 \u001b[Z");
     expect(
       encodeKeystrokes(["<DELETE>", "<HOME>", "<END>", "<PAGE_UP>", "<PAGE_DOWN>"])
     ).toBe(
@@ -51,6 +52,11 @@ describe("keystrokes", () => {
       "<CTRL_U>",
       "<SHIFT_TAB>",
       "<UP>"
+    ]);
+    expect(normalizeKeystrokes(["<SPACE>", "space bar", "{spacebar}"])).toEqual([
+      "<SPACE>",
+      "<SPACE>",
+      "<SPACE>"
     ]);
     expect(normalizeKeystrokes("Ctrl+U<ENTER>")).toEqual([
       "<CTRL_U>",

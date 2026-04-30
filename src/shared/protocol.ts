@@ -42,6 +42,7 @@ export type TerminalKeyToken =
   | "<ENTER>"
   | "<ESC>"
   | "<TAB>"
+  | "<SPACE>"
   | "<SHIFT_TAB>"
   | "<BACKSPACE>"
   | "<CTRL_C>"
