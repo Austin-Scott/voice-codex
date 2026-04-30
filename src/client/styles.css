@@ -223,7 +223,11 @@ input {
   left: 50%;
   bottom: 6px;
   display: grid;
-  grid-template-columns: clamp(30px, 8vw, 42px) clamp(36px, 10vw, 50px) clamp(44px, 13vw, 62px);
+  grid-template-columns:
+    clamp(30px, 8vw, 42px)
+    clamp(36px, 10vw, 50px)
+    clamp(44px, 13vw, 62px)
+    clamp(30px, 8vw, 42px);
   gap: 4px;
   transform: translateX(-50%);
 }

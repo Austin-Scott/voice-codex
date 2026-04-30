@@ -460,6 +460,22 @@ function sendTerminal(data: string): void {
   socket?.send({ type: "terminal.input", threadId: activeThreadId.value, data });
 }
 
+async function pasteClipboardToTerminal(): Promise<void> {
+  if (!navigator.clipboard?.readText) {
+    errorMessage.value = "Clipboard paste is not available in this browser.";
+    return;
+  }
+
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text.length > 0) {
+      sendTerminal(text);
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Clipboard paste was blocked.";
+  }
+}
+
 async function startAgentPushToTalk(): Promise<void> {
   try {
     clearAgentIdleTimer();
@@ -1053,6 +1069,14 @@ function releaseOverlayPtt(): void {
           </button>
           <button class="touch-key touch-key-small touch-space-key" type="button" aria-label="Space" @click="sendTerminal(' ')">
             Space
+          </button>
+          <button
+            class="touch-key touch-key-small"
+            type="button"
+            aria-label="Paste clipboard"
+            @click="pasteClipboardToTerminal"
+          >
+            <i class="bi bi-clipboard" aria-hidden="true"></i>
           </button>
         </div>
 
