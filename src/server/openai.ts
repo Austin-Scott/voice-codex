@@ -85,6 +85,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "When the user asks you to act, read the active terminal first if useful, then call draft_keystrokes with the exact keys or text you want to send.",
       "When read_terminal returns aboveVisibleText, treat it as scrollback above the user's current viewport, not text currently visible on screen.",
       "If the user asks to scroll the terminal view, call scroll_terminal instead of sending arrow keys.",
+      "If the user asks you to copy text to the controller clipboard, call copy_to_clipboard with the exact text. If it reports pendingUserGesture, tell the user to tap Copy on the controller.",
       "You may create and switch Codex threads by browsing directories and creating a thread in the chosen directory.",
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
       "If the user asks to change pending keystrokes, call update_keystroke_proposal instead of creating a second proposal.",
@@ -172,6 +173,23 @@ function createRealtimeSessionConfig(config: AppConfig): object {
             }
           },
           required: ["alwaysListening"],
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "copy_to_clipboard",
+        description:
+          "Copy exact text to the controller browser's clipboard. If the browser requires a user gesture, the controller will show a Copy button for the user to tap.",
+        parameters: {
+          type: "object",
+          properties: {
+            text: {
+              type: "string",
+              description: "Exact text to copy to the controller clipboard."
+            }
+          },
+          required: ["text"],
           additionalProperties: false
         }
       },

@@ -58,6 +58,7 @@ const touchOverlayEnabled = ref(loadTouchOverlayEnabled());
 const overlayPtt = ref<"agent" | "whisper" | undefined>();
 const alwaysListening = ref(false);
 const fullscreenActive = ref(Boolean(document.fullscreenElement));
+const pendingClipboardCopy = ref<{ text: string; message: string } | undefined>();
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
 let socket: VoiceCodexSocket | undefined;
@@ -169,6 +170,7 @@ function setupVoiceAgent(): void {
       getTerminalContext,
       scrollTerminal,
       setAlwaysListening,
+      copyToClipboard: copyTextToControllerClipboard,
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
         void loadThreadSnapshot(threadId);
@@ -474,6 +476,99 @@ async function pasteClipboardToTerminal(): Promise<void> {
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : "Clipboard paste was blocked.";
   }
+}
+
+async function copyTextToControllerClipboard(
+  text: string
+): Promise<{ copied: boolean; pendingUserGesture?: boolean; error?: string }> {
+  if (!text) {
+    return { copied: false, error: "No text was provided to copy." };
+  }
+
+  try {
+    await writeClipboardText(text);
+    pendingClipboardCopy.value = undefined;
+    return { copied: true };
+  } catch (error) {
+    pendingClipboardCopy.value = {
+      text,
+      message: `Tap Copy to place ${text.length.toLocaleString()} characters on this device's clipboard.`
+    };
+    return {
+      copied: false,
+      pendingUserGesture: true,
+      error: error instanceof Error ? error.message : "Clipboard copy was blocked."
+    };
+  }
+}
+
+async function copyPendingClipboardText(): Promise<void> {
+  const pending = pendingClipboardCopy.value;
+  if (!pending) {
+    return;
+  }
+
+  try {
+    await writeClipboardText(pending.text);
+    pendingClipboardCopy.value = undefined;
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : "Clipboard copy was blocked.";
+  }
+}
+
+function dismissPendingClipboardCopy(): void {
+  pendingClipboardCopy.value = undefined;
+}
+
+async function writeClipboardText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (error) {
+      if (!copyTextWithLegacyCommand(text)) {
+        throw error;
+      }
+      return;
+    }
+  }
+
+  if (copyTextWithLegacyCommand(text)) {
+    return;
+  }
+
+  throw new Error("Clipboard copy is not available in this browser.");
+}
+
+function copyTextWithLegacyCommand(text: string): boolean {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+
+  const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+  document.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    textarea.remove();
+    previouslyFocused?.focus();
+  }
+
+  return copied;
 }
 
 async function startAgentPushToTalk(): Promise<void> {
@@ -1227,6 +1322,24 @@ function releaseOverlayPtt(): void {
           </button>
         </div>
       </section>
+    </div>
+
+    <div
+      v-if="pendingClipboardCopy"
+      class="clipboard-copy-prompt"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="clipboard-copy-text">
+        <strong>Clipboard copy</strong>
+        <span>{{ pendingClipboardCopy.message }}</span>
+      </div>
+      <button class="btn btn-primary btn-sm" type="button" @click="copyPendingClipboardText">
+        Copy
+      </button>
+      <button class="btn btn-outline-light btn-sm" type="button" @click="dismissPendingClipboardCopy">
+        Dismiss
+      </button>
     </div>
 
     <div v-if="errorMessage" class="toast-error alert alert-danger">

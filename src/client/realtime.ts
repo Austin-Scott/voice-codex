@@ -44,6 +44,9 @@ export interface RealtimeToolsState {
   getTerminalContext: (aboveVisibleLines: number) => TerminalContext;
   scrollTerminal: (input: { direction: string; lines?: number }) => TerminalContext;
   setAlwaysListening: (enabled: boolean) => Promise<{ alwaysListening: boolean }>;
+  copyToClipboard: (
+    text: string
+  ) => Promise<{ copied: boolean; pendingUserGesture?: boolean; error?: string }>;
   setActiveThread: (threadId: string) => void;
   setThreads: (threads: CodexThreadSummary[], activeThreadId?: string) => void;
   showDirectoryListing: (listing: DirectoryListing) => void;
@@ -233,6 +236,10 @@ export class RealtimeVoiceAgent {
 
     if (name === "set_listening_mode") {
       return this.toolsState.setAlwaysListening(Boolean(args.alwaysListening));
+    }
+
+    if (name === "copy_to_clipboard") {
+      return this.toolsState.copyToClipboard(String(args.text ?? ""));
     }
 
     if (name === "draft_keystrokes") {
