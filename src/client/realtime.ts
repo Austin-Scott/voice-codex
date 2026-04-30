@@ -42,6 +42,7 @@ export interface RealtimeToolsState {
   getThreads: () => { threads: CodexThreadSummary[]; activeThreadId?: string };
   getPendingProposals: () => KeystrokeProposal[];
   getTerminalContext: (aboveVisibleLines: number) => TerminalContext;
+  scrollTerminal: (input: { direction: string; lines?: number }) => TerminalContext;
   setActiveThread: (threadId: string) => void;
   setThreads: (threads: CodexThreadSummary[], activeThreadId?: string) => void;
   showDirectoryListing: (listing: DirectoryListing) => void;
@@ -220,6 +221,13 @@ export class RealtimeVoiceAgent {
         };
       }
       return readTerminal(threadId, Number(args.lines ?? 120));
+    }
+
+    if (name === "scroll_terminal") {
+      return this.toolsState.scrollTerminal({
+        direction: String(args.direction ?? ""),
+        lines: typeof args.lines === "number" ? args.lines : undefined
+      });
     }
 
     if (name === "draft_keystrokes") {

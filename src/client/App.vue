@@ -25,13 +25,9 @@ import {
 } from "./api";
 import {
   DEFAULT_PEDAL_BINDINGS,
-  DEFAULT_TOUCH_MAPPINGS,
   PedalInput,
-  TouchButtonInput,
-  type TouchPoint,
   type PedalBindings,
-  type PedalHandlers,
-  type TouchMappings
+  type PedalHandlers
 } from "./pedal";
 import { RealtimeVoiceAgent, type TerminalContext } from "./realtime";
 import { VoiceCodexSocket } from "./socket";
@@ -58,9 +54,9 @@ const settingsOpen = ref(false);
 const folderPickerOpen = ref(false);
 const directoryListing = ref<DirectoryListing | undefined>();
 const newDirectoryName = ref("");
-const touchControlsEnabled = ref(loadTouchControlsEnabled());
+const touchOverlayEnabled = ref(loadTouchOverlayEnabled());
+const overlayPtt = ref<"agent" | "whisper" | undefined>();
 const fullscreenActive = ref(Boolean(document.fullscreenElement));
-const touchMappings = reactive<TouchMappings>(loadTouchMappings());
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
 let socket: VoiceCodexSocket | undefined;
@@ -68,7 +64,6 @@ let terminal: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let pedal: PedalInput | undefined;
-let touchInput: TouchButtonInput | undefined;
 let voiceAgent: RealtimeVoiceAgent | undefined;
 let agentPressed = false;
 let whisperRecorder: MediaRecorder | undefined;
@@ -101,15 +96,11 @@ onBeforeUnmount(() => {
   window.removeEventListener("pointerdown", handleWakeLockGesture);
   resizeObserver?.disconnect();
   pedal?.dispose();
-  touchInput?.dispose();
+  releaseOverlayPtt();
   clearAgentIdleTimer();
   voiceAgent?.disconnect();
   void releaseWakeLock();
   socket?.close();
-  terminalElement.value?.removeEventListener("touchstart", handleTouchStart);
-  terminalElement.value?.removeEventListener("touchmove", handleTouchMove);
-  terminalElement.value?.removeEventListener("touchend", handleTouchEnd);
-  terminalElement.value?.removeEventListener("touchcancel", handleTouchCancel);
 });
 
 async function loadSession(): Promise<void> {
@@ -157,7 +148,6 @@ async function initializeController(): Promise<void> {
   await refreshThreads();
   setupVoiceAgent();
   setupPedal();
-  setupTouchInput();
   connectSocket();
   await nextTick();
   setupTerminal();
@@ -176,6 +166,7 @@ function setupVoiceAgent(): void {
       getThreads: () => ({ threads: threads.value, activeThreadId: activeThreadId.value }),
       getPendingProposals: () => pendingProposals.value,
       getTerminalContext,
+      scrollTerminal,
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
         void loadThreadSnapshot(threadId);
@@ -226,29 +217,6 @@ function setupPedal(): void {
     onActionEsc: () => sendTerminal("\u001b")
   };
   pedal = new PedalInput({ ...bindings }, handlers);
-}
-
-function setupTouchInput(): void {
-  touchInput?.dispose();
-  touchInput = new TouchButtonInput(
-    {
-      onAgentDown: () => {
-        handleAgentDown();
-      },
-      onAgentUp: () => {
-        handleAgentUp();
-      },
-      onWhisperDown: () => {
-        void startWhisper();
-      },
-      onWhisperUp: () => {
-        void stopWhisper();
-      },
-      onActionEnter: () => sendTerminal("\r"),
-      onActionEsc: () => sendTerminal("\u001b")
-    },
-    { ...touchMappings }
-  );
 }
 
 function connectSocket(): void {
@@ -304,10 +272,6 @@ function setupTerminal(): void {
     }
   });
   resizeObserver.observe(terminalElement.value);
-  terminalElement.value.addEventListener("touchstart", handleTouchStart, { passive: false });
-  terminalElement.value.addEventListener("touchmove", handleTouchMove, { passive: false });
-  terminalElement.value.addEventListener("touchend", handleTouchEnd, { passive: false });
-  terminalElement.value.addEventListener("touchcancel", handleTouchCancel, { passive: false });
   fitAddon.fit();
 }
 
@@ -614,41 +578,6 @@ function handleKeyUp(event: KeyboardEvent): void {
   }
 }
 
-function handleTouchStart(event: TouchEvent): void {
-  if (!touchControlsEnabled.value || !touchInput) {
-    return;
-  }
-
-  const started = touchInput.start(toTouchPoints(event.touches));
-  if (started && event.touches.length === 3) {
-    event.preventDefault();
-  }
-}
-
-function handleTouchMove(event: TouchEvent): void {
-  if (!touchControlsEnabled.value || !touchInput) {
-    return;
-  }
-
-  if (touchInput.move(toTouchPoints(event.touches))) {
-    event.preventDefault();
-  }
-}
-
-function handleTouchEnd(event: TouchEvent): void {
-  if (!touchControlsEnabled.value || !touchInput) {
-    return;
-  }
-
-  if (event.touches.length === 0 && touchInput.end()) {
-    event.preventDefault();
-  }
-}
-
-function handleTouchCancel(): void {
-  touchInput?.cancel();
-}
-
 async function toggleFullscreen(): Promise<void> {
   try {
     if (document.fullscreenElement) {
@@ -825,6 +754,29 @@ function readTerminalLines(startLine: number, endLine: number): string {
   return lines.join("\n").replace(/\s+$/g, "");
 }
 
+function scrollTerminal(input: { direction: string; lines?: number }): TerminalContext {
+  if (!terminal) {
+    return getTerminalContext(120);
+  }
+
+  const direction = input.direction.toLowerCase();
+  const buffer = terminal.buffer.active;
+  const maxViewportLine = Math.max(0, buffer.length - terminal.rows);
+  const lineCount = Number.isFinite(input.lines) ? Math.max(1, Math.min(300, Number(input.lines))) : terminal.rows;
+
+  if (direction === "top") {
+    terminal.scrollToTop();
+  } else if (direction === "bottom") {
+    terminal.scrollToBottom();
+  } else if (direction === "up") {
+    terminal.scrollToLine(Math.max(0, buffer.viewportY - lineCount));
+  } else if (direction === "down") {
+    terminal.scrollToLine(Math.min(maxViewportLine, buffer.viewportY + lineCount));
+  }
+
+  return getTerminalContext(120);
+}
+
 async function requestWakeLock(): Promise<void> {
   if (!isController.value || wakeLock || document.visibilityState !== "visible") {
     return;
@@ -876,66 +828,42 @@ function savePedalBindings(value: PedalBindings): void {
   window.localStorage.setItem("voice-codex-pedal-bindings", JSON.stringify(value));
 }
 
-function loadTouchControlsEnabled(): boolean {
-  return window.localStorage.getItem("voice-codex-touch-controls") !== "false";
+function loadTouchOverlayEnabled(): boolean {
+  return window.localStorage.getItem("voice-codex-touch-overlay") === "true";
 }
 
-function saveTouchControlsEnabled(): void {
-  window.localStorage.setItem("voice-codex-touch-controls", String(touchControlsEnabled.value));
-}
-
-function loadTouchMappings(): TouchMappings {
-  const stored = window.localStorage.getItem("voice-codex-touch-mappings");
-  if (!stored) {
-    return { ...DEFAULT_TOUCH_MAPPINGS };
-  }
-
-  try {
-    return normalizeTouchMappings(JSON.parse(stored) as Partial<TouchMappings>);
-  } catch {
-    return { ...DEFAULT_TOUCH_MAPPINGS };
+function saveTouchOverlayEnabled(): void {
+  window.localStorage.setItem("voice-codex-touch-overlay", String(touchOverlayEnabled.value));
+  if (!touchOverlayEnabled.value) {
+    releaseOverlayPtt();
   }
 }
 
-function setTouchMapping(kind: keyof TouchMappings, value: string): void {
-  const next = Number(value);
-  const previous = touchMappings[kind];
-  const swappedKind = (Object.keys(touchMappings) as Array<keyof TouchMappings>).find(
-    (candidate) => candidate !== kind && touchMappings[candidate] === next
-  );
-
-  touchMappings[kind] = next;
-  if (swappedKind) {
-    touchMappings[swappedKind] = previous;
+function handleOverlayPttDown(kind: "agent" | "whisper", event: PointerEvent): void {
+  if (overlayPtt.value === kind) {
+    return;
   }
 
-  saveTouchMappings();
-}
+  releaseOverlayPtt();
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  overlayPtt.value = kind;
 
-function onTouchMappingChange(kind: keyof TouchMappings, event: Event): void {
-  const target = event.target;
-  if (target instanceof HTMLSelectElement) {
-    setTouchMapping(kind, target.value);
+  if (kind === "agent") {
+    handleAgentDown();
+  } else {
+    void startWhisper();
   }
 }
 
-function saveTouchMappings(): void {
-  window.localStorage.setItem("voice-codex-touch-mappings", JSON.stringify(touchMappings));
-  touchInput?.setMappings({ ...touchMappings });
-}
-
-function normalizeTouchMappings(input: Partial<TouchMappings>): TouchMappings {
-  const values = [input.agent, input.whisper, input.action].map((value) => Number(value));
-  const valid = values.every((value) => [1, 2, 3].includes(value)) && new Set(values).size === 3;
-  if (!valid) {
-    return { ...DEFAULT_TOUCH_MAPPINGS };
+function handleOverlayPttUp(kind: "agent" | "whisper", event: PointerEvent): void {
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId);
   }
-
-  return {
-    agent: values[0],
-    whisper: values[1],
-    action: values[2]
-  };
+  if (overlayPtt.value === kind) {
+    releaseOverlayPtt();
+  }
 }
 
 function syncQrHostInput(): void {
@@ -950,12 +878,14 @@ function syncQrHostInput(): void {
   }
 }
 
-function toTouchPoints(touches: TouchList): TouchPoint[] {
-  return Array.from(touches).map((touch) => ({
-    id: touch.identifier,
-    x: touch.clientX,
-    y: touch.clientY
-  }));
+function releaseOverlayPtt(): void {
+  const active = overlayPtt.value;
+  overlayPtt.value = undefined;
+  if (active === "agent") {
+    handleAgentUp();
+  } else if (active === "whisper") {
+    void stopWhisper();
+  }
 }
 </script>
 
@@ -1024,6 +954,83 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
 
     <section class="terminal-area" :aria-label="activeThread?.name ?? 'Codex terminal'">
       <div ref="terminalElement" class="terminal-container"></div>
+
+      <div v-if="touchOverlayEnabled" class="touch-overlay" aria-label="Terminal touch controls">
+        <div class="touch-overlay-layout">
+          <div class="touch-cluster touch-dpad">
+            <span aria-hidden="true"></span>
+            <button class="touch-key" type="button" aria-label="Up" @click="sendTerminal('\u001b[A')">
+              <i class="bi bi-arrow-up" aria-hidden="true"></i>
+            </button>
+            <span aria-hidden="true"></span>
+            <button class="touch-key" type="button" aria-label="Left" @click="sendTerminal('\u001b[D')">
+              <i class="bi bi-arrow-left" aria-hidden="true"></i>
+            </button>
+            <button class="touch-key touch-key-text" type="button" aria-label="Enter" @click="sendTerminal('\r')">
+              Enter
+            </button>
+            <button class="touch-key" type="button" aria-label="Right" @click="sendTerminal('\u001b[C')">
+              <i class="bi bi-arrow-right" aria-hidden="true"></i>
+            </button>
+            <span aria-hidden="true"></span>
+            <button class="touch-key" type="button" aria-label="Down" @click="sendTerminal('\u001b[B')">
+              <i class="bi bi-arrow-down" aria-hidden="true"></i>
+            </button>
+            <span aria-hidden="true"></span>
+          </div>
+
+          <div class="touch-cluster touch-keypad">
+            <button class="touch-key touch-key-text" type="button" aria-label="Escape" @click="sendTerminal('\u001b')">
+              Esc
+            </button>
+            <button class="touch-key touch-key-text" type="button" aria-label="Tab" @click="sendTerminal('\t')">
+              Tab
+            </button>
+            <button
+              class="touch-key touch-key-text"
+              type="button"
+              aria-label="Backspace"
+              @click="sendTerminal('\u007f')"
+            >
+              Bksp
+            </button>
+            <button class="touch-key touch-key-text" type="button" aria-label="Space" @click="sendTerminal(' ')">
+              Space
+            </button>
+            <button class="touch-key touch-key-text" type="button" aria-label="1" @click="sendTerminal('1')">1</button>
+            <button class="touch-key touch-key-text" type="button" aria-label="2" @click="sendTerminal('2')">2</button>
+            <button class="touch-key touch-key-text" type="button" aria-label="3" @click="sendTerminal('3')">3</button>
+            <button class="touch-key touch-key-text" type="button" aria-label="4" @click="sendTerminal('4')">4</button>
+          </div>
+
+          <div class="touch-cluster touch-ptt-row">
+            <button
+              class="touch-key touch-ptt"
+              :class="{ pressed: overlayPtt === 'whisper' }"
+              type="button"
+              @pointerdown.prevent="handleOverlayPttDown('whisper', $event)"
+              @pointerup.prevent="handleOverlayPttUp('whisper', $event)"
+              @pointercancel.prevent="handleOverlayPttUp('whisper', $event)"
+              @lostpointercapture="releaseOverlayPtt"
+            >
+              <i class="bi bi-keyboard" aria-hidden="true"></i>
+              Whisper
+            </button>
+            <button
+              class="touch-key touch-ptt"
+              :class="{ pressed: overlayPtt === 'agent' }"
+              type="button"
+              @pointerdown.prevent="handleOverlayPttDown('agent', $event)"
+              @pointerup.prevent="handleOverlayPttUp('agent', $event)"
+              @pointercancel.prevent="handleOverlayPttUp('agent', $event)"
+              @lostpointercapture="releaseOverlayPtt"
+            >
+              <i class="bi bi-mic-fill" aria-hidden="true"></i>
+              Agent
+            </button>
+          </div>
+        </div>
+      </div>
 
       <div v-if="pendingProposals.length > 0" class="proposal-overlay">
         <article v-for="proposal in pendingProposals" :key="proposal.id" class="proposal">
@@ -1125,57 +1132,18 @@ function toTouchPoints(touches: TouchList): TouchPoint[] {
             </button>
           </div>
           <label class="touch-toggle">
-            <span>Touch controls</span>
+            <span>Touch overlay</span>
             <input
-              v-model="touchControlsEnabled"
+              v-model="touchOverlayEnabled"
               class="form-check-input"
               type="checkbox"
-              @change="saveTouchControlsEnabled"
+              @change="saveTouchOverlayEnabled"
             />
           </label>
           <button class="btn btn-outline-light w-100" type="button" @click="toggleFullscreen">
             <i class="bi bi-arrows-fullscreen" aria-hidden="true"></i>
             {{ fullscreenActive ? "Exit Fullscreen" : "Enter Fullscreen" }}
           </button>
-          <div class="touch-map-row">
-            <label for="touch-agent">Agent PTT</label>
-            <select
-              id="touch-agent"
-              class="form-select form-select-sm"
-              :value="touchMappings.agent"
-              @change="onTouchMappingChange('agent', $event)"
-            >
-              <option value="1">1 finger</option>
-              <option value="2">2 fingers</option>
-              <option value="3">3 fingers</option>
-            </select>
-          </div>
-          <div class="touch-map-row">
-            <label for="touch-whisper">Whisper PTT</label>
-            <select
-              id="touch-whisper"
-              class="form-select form-select-sm"
-              :value="touchMappings.whisper"
-              @change="onTouchMappingChange('whisper', $event)"
-            >
-              <option value="1">1 finger</option>
-              <option value="2">2 fingers</option>
-              <option value="3">3 fingers</option>
-            </select>
-          </div>
-          <div class="touch-map-row">
-            <label for="touch-action">Enter/Esc</label>
-            <select
-              id="touch-action"
-              class="form-select form-select-sm"
-              :value="touchMappings.action"
-              @change="onTouchMappingChange('action', $event)"
-            >
-              <option value="1">1 finger</option>
-              <option value="2">2 fingers</option>
-              <option value="3">3 fingers</option>
-            </select>
-          </div>
         </div>
       </section>
     </div>

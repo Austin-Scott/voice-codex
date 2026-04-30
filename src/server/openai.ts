@@ -83,6 +83,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "You can inspect terminal output through tools and draft keystrokes, but you must not send terminal input directly.",
       "When the user asks you to act, read the active terminal first if useful, then call draft_keystrokes with the exact keys or text you want to send.",
       "When read_terminal returns aboveVisibleText, treat it as scrollback above the user's current viewport, not text currently visible on screen.",
+      "If the user asks to scroll the terminal view, call scroll_terminal instead of sending arrow keys.",
       "You may create and switch Codex threads by browsing directories and creating a thread in the chosen directory.",
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
       "If the user asks to change pending keystrokes, call update_keystroke_proposal instead of creating a second proposal.",
@@ -130,6 +131,29 @@ function createRealtimeSessionConfig(config: AppConfig): object {
               default: 80
             }
           },
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "scroll_terminal",
+        description:
+          "Scroll the active controller terminal viewport and return the newly visible terminal context.",
+        parameters: {
+          type: "object",
+          properties: {
+            direction: {
+              type: "string",
+              enum: ["up", "down", "top", "bottom"],
+              description: "Direction to scroll the browser terminal viewport."
+            },
+            lines: {
+              type: "number",
+              description:
+                "Number of lines to scroll for up/down. Omit to scroll about one visible page."
+            }
+          },
+          required: ["direction"],
           additionalProperties: false
         }
       },
