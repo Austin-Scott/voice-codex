@@ -42,8 +42,10 @@ export type TerminalKeyToken =
   | "<ENTER>"
   | "<ESC>"
   | "<TAB>"
+  | "<SHIFT_TAB>"
   | "<BACKSPACE>"
   | "<CTRL_C>"
+  | "<CTRL_J>"
   | "<UP>"
   | "<DOWN>"
   | "<LEFT>"
@@ -132,6 +134,7 @@ export type ClientEvent =
   | { type: "terminal.resize"; threadId: string; cols: number; rows: number }
   | { type: "thread.select"; threadId: string }
   | { type: "thread.create"; name?: string; cwd: string }
+  | { type: "thread.close"; threadId: string }
   | { type: "proposal.update"; proposalId: string; displayText: string; keystrokes: TerminalKeyToken[] }
   | { type: "proposal.approve"; proposalId: string }
   | { type: "proposal.reject"; proposalId: string };

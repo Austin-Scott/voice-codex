@@ -104,4 +104,17 @@ export class ProposalManager extends EventEmitter {
   listPending(): KeystrokeProposal[] {
     return Array.from(this.proposals.values()).filter((proposal) => proposal.status === "pending");
   }
+
+  rejectForThread(threadId: string, reason: string): void {
+    for (const proposal of this.proposals.values()) {
+      if (proposal.threadId !== threadId || proposal.status !== "pending") {
+        continue;
+      }
+
+      proposal.status = "rejected";
+      proposal.resolvedAt = new Date().toISOString();
+      proposal.reason = `${proposal.reason}\n\n${reason}`;
+      this.emit("resolved", proposal);
+    }
+  }
 }

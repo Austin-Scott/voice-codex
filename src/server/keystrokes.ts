@@ -4,17 +4,19 @@ const KEY_MAP: Record<string, string> = {
   "<ENTER>": "\r",
   "<ESC>": "\u001b",
   "<TAB>": "\t",
+  "<SHIFT_TAB>": "\u001b[Z",
   "<BACKSPACE>": "\u007f",
   "<CTRL_C>": "\u0003",
+  "<CTRL_J>": "\n",
   "<UP>": "\u001b[A",
   "<DOWN>": "\u001b[B",
   "<RIGHT>": "\u001b[C",
   "<LEFT>": "\u001b[D"
 };
 const KEY_TOKEN_PATTERN =
-  /(<(?:ENTER|RETURN|ESCAPE|ESC|TAB|BACKSPACE|CTRL[_ -]?C|UP|DOWN|LEFT|RIGHT)>|\[(?:ENTER|RETURN|ESCAPE|ESC|TAB|BACKSPACE|CTRL[_ -]?C|UP|DOWN|LEFT|RIGHT)\]|\{(?:ENTER|RETURN|ESCAPE|ESC|TAB|BACKSPACE|CTRL[_ -]?C|UP|DOWN|LEFT|RIGHT)\}|\\r\\n|\\r|\\n|\r\n|\r|\n)/gi;
+  /(<(?:ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)>|\[(?:ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)\]|\{(?:ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)\}|\\r\\n|\\r|\\n|\r\n|\r|\n)/gi;
 const BARE_KEY_PATTERN =
-  /^(?:(?:PRESS|HIT|SEND)\s+)?(?:THE\s+)?(ENTER|RETURN|ESCAPE|ESC|TAB|BACKSPACE|CTRL[_ -]?C|UP|DOWN|LEFT|RIGHT)(?:\s+KEY)?$/i;
+  /^(?:(?:PRESS|HIT|SEND)\s+)?(?:THE\s+)?(ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)(?:\s+KEY)?$/i;
 
 export function encodeKeystrokes(tokens: TerminalKeyToken[]): string {
   return tokens.flatMap(splitKeyTokens).map(encodeKeystrokeToken).join("");
@@ -87,17 +89,26 @@ function canonicalizeKeyToken(value: string): TerminalKeyToken {
 }
 
 function canonicalizeBareKey(value: string): TerminalKeyToken | undefined {
-  const match = value.trim().match(BARE_KEY_PATTERN);
+  const match = value.trim().replace(/\s*\+\s*/g, "+").match(BARE_KEY_PATTERN);
   if (!match) {
     return undefined;
   }
 
-  const name = match[1].toUpperCase().replace(/[\s-]/g, "_");
+  let name = match[1].toUpperCase().replace(/[\s+_-]/g, "_").replace(/^CONTROL_?/, "CTRL_");
+  if (name === "CTRLC") {
+    name = "CTRL_C";
+  }
+  if (name === "CTRLJ") {
+    name = "CTRL_J";
+  }
+  if (name === "SHIFTTAB") {
+    name = "SHIFT_TAB";
+  }
   if (name === "RETURN") {
     return "<ENTER>";
   }
   if (name === "ESCAPE") {
     return "<ESC>";
   }
-  return `<${name === "CTRL_C" ? "CTRL_C" : name}>`;
+  return `<${name}>`;
 }

@@ -114,7 +114,7 @@ export class PtyThreadManager extends EventEmitter {
         thread.state = "exited";
         thread.exitCode = event.exitCode;
         thread.updatedAt = new Date();
-        this.emit("thread", this.toSummary(thread));
+        this.removeThread(thread);
       });
     } catch (error) {
       thread.state = "error";
@@ -140,20 +140,39 @@ export class PtyThreadManager extends EventEmitter {
   }
 
   stop(id: string): CodexThreadSummary | undefined {
+    return this.close(id);
+  }
+
+  close(id: string): CodexThreadSummary | undefined {
     const thread = this.threads.get(id);
     if (!thread) {
       return undefined;
     }
 
+    thread.state = "exited";
+    thread.updatedAt = new Date();
+    const summary = this.toSummary(thread);
     thread.process?.kill();
+    this.removeThread(thread);
+    return summary;
+  }
+
+  private removeThread(thread: ManagedThread): void {
+    if (!this.threads.has(thread.id)) {
+      return;
+    }
+
     if (thread.frameTimer) {
       clearTimeout(thread.frameTimer);
       thread.frameTimer = undefined;
     }
-    thread.state = "exited";
-    thread.updatedAt = new Date();
-    this.emit("thread", this.toSummary(thread));
-    return this.toSummary(thread);
+    thread.process = undefined;
+    this.threads.delete(thread.id);
+    if (this.activeThreadId === thread.id) {
+      this.activeThreadId = this.getMostRecentThreadId();
+    }
+    this.emit("thread.closed", thread.id);
+    this.emit("threads", this.list());
   }
 
   resize(id: string, cols: number, rows: number): boolean {
@@ -246,6 +265,16 @@ export class PtyThreadManager extends EventEmitter {
       createdAt: thread.createdAt.toISOString(),
       updatedAt: thread.updatedAt.toISOString()
     };
+  }
+
+  private getMostRecentThreadId(): string | undefined {
+    let selected: ManagedThread | undefined;
+    for (const thread of this.threads.values()) {
+      if (!selected || thread.updatedAt > selected.updatedAt) {
+        selected = thread;
+      }
+    }
+    return selected?.id;
   }
 }
 

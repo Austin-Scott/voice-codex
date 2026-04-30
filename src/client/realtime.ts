@@ -1,6 +1,7 @@
 import type { CodexThreadSummary, DirectoryListing } from "@shared/protocol";
 import {
   browseDirectories,
+  closeThread,
   createDirectory,
   createProposal,
   createRealtimeAnswer,
@@ -41,6 +42,7 @@ export interface RealtimeToolsState {
   getThreads: () => { threads: CodexThreadSummary[]; activeThreadId?: string };
   getTerminalContext: (aboveVisibleLines: number) => TerminalContext;
   setActiveThread: (threadId: string) => void;
+  setThreads: (threads: CodexThreadSummary[], activeThreadId?: string) => void;
   showDirectoryListing: (listing: DirectoryListing) => void;
   showFolderPicker: () => void;
   hideFolderPicker: () => void;
@@ -253,6 +255,16 @@ export class RealtimeVoiceAgent {
       const threadId = String(args.threadId);
       const response = await selectThread(threadId);
       this.toolsState.setActiveThread(threadId);
+      return response;
+    }
+
+    if (name === "close_thread") {
+      const threadId = this.resolveThreadId(args.threadId);
+      if (!threadId) {
+        return { error: "No active Codex thread is selected." };
+      }
+      const response = await closeThread(threadId);
+      this.toolsState.setThreads(response.threads, response.activeThreadId);
       return response;
     }
 

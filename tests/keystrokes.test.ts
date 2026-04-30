@@ -7,8 +7,8 @@ import {
 
 describe("keystrokes", () => {
   it("encodes literal text and named keys", () => {
-    expect(encodeKeystrokes(["hello", "<ENTER>", "<ESC>", "<CTRL_C>"])).toBe(
-      "hello\r\u001b\u0003"
+    expect(encodeKeystrokes(["hello", "<ENTER>", "<ESC>", "<CTRL_C>", "<CTRL_J>", "<SHIFT_TAB>"])).toBe(
+      "hello\r\u001b\u0003\n\u001b[Z"
     );
   });
 
@@ -30,11 +30,20 @@ describe("keystrokes", () => {
       "npm test",
       "<ENTER>"
     ]);
-    expect(normalizeKeystrokes(["a<TAB>b", "<CTRL_C>"])).toEqual([
+    expect(normalizeKeystrokes(["send ctrl+j key", "<SHIFT+TAB>"])).toEqual([
+      "<CTRL_J>",
+      "<SHIFT_TAB>"
+    ]);
+    expect(normalizeKeystrokes(["<CTRL + J>", "shift + tab"])).toEqual([
+      "<CTRL_J>",
+      "<SHIFT_TAB>"
+    ]);
+    expect(normalizeKeystrokes(["a<TAB>b", "<CTRL_C>", "[Shift Tab]"])).toEqual([
       "a",
       "<TAB>",
       "b",
-      "<CTRL_C>"
+      "<CTRL_C>",
+      "<SHIFT_TAB>"
     ]);
     expect(encodeKeystrokes(["npm test<ENTER>"])).toBe("npm test\r");
   });

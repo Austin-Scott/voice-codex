@@ -153,6 +153,20 @@ app.post("/api/threads/:id/stop", requireController, (req, res) => {
   res.json({ thread });
 });
 
+app.post("/api/threads/:id/close", requireController, (req, res) => {
+  const thread = threads.close(String(req.params.id));
+  if (!thread) {
+    res.status(404).json({ error: "Thread not found" });
+    return;
+  }
+
+  res.json({
+    closedThreadId: thread.id,
+    threads: threads.list(),
+    activeThreadId: threads.getActiveThreadId()
+  });
+});
+
 app.get(
   "/api/threads/:id/read",
   requireController,
@@ -308,6 +322,10 @@ threads.on("threads", () => {
   });
 });
 
+threads.on("thread.closed", (threadId) => {
+  proposals.rejectForThread(String(threadId), "Not sent: target thread was closed.");
+});
+
 proposals.on("created", (proposal) => {
   broadcast({ type: "proposal.created", proposal });
 });
@@ -372,6 +390,13 @@ async function handleClientEvent(ws: WebSocket, raw: string): Promise<void> {
       createManagedThread(event.cwd, event.name);
     } catch (error) {
       send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
+  if (event.type === "thread.close") {
+    if (!threads.close(event.threadId)) {
+      send(ws, { type: "error", message: "Thread not found" });
     }
     return;
   }

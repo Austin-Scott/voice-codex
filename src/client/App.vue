@@ -179,6 +179,14 @@ function setupVoiceAgent(): void {
         activeThreadId.value = threadId;
         void loadThreadSnapshot(threadId);
       },
+      setThreads: (nextThreads, nextActiveThreadId) => {
+        threads.value = nextThreads;
+        activeThreadId.value = nextActiveThreadId;
+        clearTerminal();
+        if (nextActiveThreadId) {
+          void loadThreadSnapshot(nextActiveThreadId);
+        }
+      },
       showDirectoryListing: (listing) => {
         directoryListing.value = listing;
         folderPickerOpen.value = true;
@@ -304,10 +312,15 @@ function setupTerminal(): void {
 
 function handleServerEvent(event: ServerEvent): void {
   if (event.type === "threads") {
+    const previousActiveThreadId = activeThreadId.value;
     threads.value = event.threads;
     const localSelectionStillExists = event.threads.some((thread) => thread.id === activeThreadId.value);
     if (!localSelectionStillExists) {
       activeThreadId.value = event.activeThreadId;
+      clearTerminal();
+      if (event.activeThreadId && event.activeThreadId !== previousActiveThreadId) {
+        void loadThreadSnapshot(event.activeThreadId);
+      }
     }
     return;
   }
@@ -421,9 +434,10 @@ async function stopSelectedThread(): Promise<void> {
   if (!activeThreadId.value) {
     return;
   }
+  const threadId = activeThreadId.value;
   try {
-    const response = await stopThread(activeThreadId.value);
-    upsertThread(response.thread);
+    await stopThread(threadId);
+    removeThread(threadId);
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
   }
@@ -505,7 +519,7 @@ function scheduleAgentIdleDisconnect(): void {
     if (!agentPressed) {
       voiceAgent?.disconnect();
     }
-  }, 30_000);
+  }, 120_000);
 }
 
 function clearAgentIdleTimer(): void {
@@ -658,11 +672,30 @@ function handleWakeLockGesture(): void {
 }
 
 function upsertThread(thread: CodexThreadSummary): void {
+  if (thread.state === "exited") {
+    removeThread(thread.id);
+    return;
+  }
+
   const index = threads.value.findIndex((existing) => existing.id === thread.id);
   if (index >= 0) {
     threads.value.splice(index, 1, thread);
   } else {
     threads.value.push(thread);
+  }
+}
+
+function removeThread(threadId: string): void {
+  const index = threads.value.findIndex((existing) => existing.id === threadId);
+  if (index >= 0) {
+    threads.value.splice(index, 1);
+  }
+  if (activeThreadId.value === threadId) {
+    activeThreadId.value = threads.value[0]?.id;
+    clearTerminal();
+    if (activeThreadId.value) {
+      void loadThreadSnapshot(activeThreadId.value);
+    }
   }
 }
 

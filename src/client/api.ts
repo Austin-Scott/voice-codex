@@ -73,6 +73,16 @@ export async function stopThread(threadId: string): Promise<{ thread: CodexThrea
   });
 }
 
+export async function closeThread(threadId: string): Promise<{
+  closedThreadId: string;
+  threads: CodexThreadSummary[];
+  activeThreadId?: string;
+}> {
+  return request(`/api/threads/${encodeURIComponent(threadId)}/close`, {
+    method: "POST"
+  });
+}
+
 export async function readTerminal(
   threadId: string,
   lines = 80

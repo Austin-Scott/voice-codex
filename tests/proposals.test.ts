@@ -104,4 +104,26 @@ describe("ProposalManager", () => {
       })
     ).toThrow("Cannot edit a resolved proposal");
   });
+
+  it("rejects pending proposals for a closed thread", () => {
+    const threads = {
+      getSummary: vi.fn(() => ({
+        id: "thread-1",
+        name: "Thread 1"
+      })),
+      writeKeystrokes: vi.fn(() => true)
+    };
+    const manager = new ProposalManager(threads as never);
+    const proposal = manager.create({
+      threadId: "thread-1",
+      keystrokes: ["hello"],
+      displayText: "hello",
+      reason: "test"
+    });
+
+    manager.rejectForThread("thread-1", "thread closed");
+
+    expect(manager.listPending()).toEqual([]);
+    expect(proposal.status).toBe("rejected");
+  });
 });
