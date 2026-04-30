@@ -7,8 +7,21 @@ import {
 
 describe("keystrokes", () => {
   it("encodes literal text and named keys", () => {
-    expect(encodeKeystrokes(["hello", "<ENTER>", "<ESC>", "<CTRL_C>", "<CTRL_J>", "<SHIFT_TAB>"])).toBe(
-      "hello\r\u001b\u0003\n\u001b[Z"
+    expect(
+      encodeKeystrokes([
+        "hello",
+        "<ENTER>",
+        "<ESC>",
+        "<CTRL_C>",
+        "<CTRL_J>",
+        "<CTRL_U>",
+        "<SHIFT_TAB>"
+      ])
+    ).toBe("hello\r\u001b\u0003\n\u0015\u001b[Z");
+    expect(
+      encodeKeystrokes(["<DELETE>", "<HOME>", "<END>", "<PAGE_UP>", "<PAGE_DOWN>"])
+    ).toBe(
+      "\u001b[3~\u001b[H\u001b[F\u001b[5~\u001b[6~"
     );
   });
 
@@ -33,6 +46,24 @@ describe("keystrokes", () => {
     expect(normalizeKeystrokes(["send ctrl+j key", "<SHIFT+TAB>"])).toEqual([
       "<CTRL_J>",
       "<SHIFT_TAB>"
+    ]);
+    expect(normalizeKeystrokes(["<CTRL + U>", "shift + tab", "up arrow key"])).toEqual([
+      "<CTRL_U>",
+      "<SHIFT_TAB>",
+      "<UP>"
+    ]);
+    expect(normalizeKeystrokes("Ctrl+U<ENTER>")).toEqual([
+      "<CTRL_U>",
+      "<ENTER>"
+    ]);
+    expect(normalizeKeystrokes(["control a", "control z"])).toEqual([
+      "<CTRL_A>",
+      "<CTRL_Z>"
+    ]);
+    expect(normalizeKeystrokes(["<CTRL_J>", "<CTRL_U>", "{page down}"])).toEqual([
+      "<CTRL_J>",
+      "<CTRL_U>",
+      "<PAGE_DOWN>"
     ]);
     expect(normalizeKeystrokes(["<CTRL + J>", "shift + tab"])).toEqual([
       "<CTRL_J>",

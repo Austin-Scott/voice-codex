@@ -86,8 +86,9 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "You may create and switch Codex threads by browsing directories and creating a thread in the chosen directory.",
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
       "If the user asks to change pending keystrokes, call update_keystroke_proposal instead of creating a second proposal.",
-      "If the user verbally approves or rejects a visible proposal, call resolve_keystroke_proposal.",
-      "Use literal text tokens for normal typing. Use named tokens for special keys: <ENTER>, <ESC>, <TAB>, <SHIFT_TAB>, <BACKSPACE>, <CTRL_C>, <CTRL_J>, <UP>, <DOWN>, <LEFT>, <RIGHT>.",
+      "If the user asks about pending approvals, or before you say no pending approvals exist, call list_pending_proposals.",
+      "If the user verbally approves or rejects a visible proposal, call list_pending_proposals if you need the proposal id, then call resolve_keystroke_proposal.",
+      "Use literal text tokens for normal typing. Use named tokens for special keys: <ENTER>, <ESC>, <TAB>, <SHIFT_TAB>, <BACKSPACE>, <CTRL_A> through <CTRL_Z>, <UP>, <DOWN>, <LEFT>, <RIGHT>.",
       "When a proposal includes a special key, include that named token in both keystrokes and displayText, for example npm test<ENTER>.",
       "If the user asks to close or remove a Codex thread from the tab bar, call close_thread; do not draft /exit unless the user specifically asks to send /exit.",
       "Keep spoken responses short."
@@ -97,6 +98,17 @@ function createRealtimeSessionConfig(config: AppConfig): object {
         type: "function",
         name: "list_threads",
         description: "List managed Codex terminal sessions and identify the active one.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "list_pending_proposals",
+        description:
+          "List keystroke approval proposals currently visible in the controller UI, including proposal ids needed to approve, reject, or edit them.",
         parameters: {
           type: "object",
           properties: {},
@@ -137,7 +149,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
               type: "array",
               items: { type: "string" },
               description:
-                "Literal text tokens and/or named tokens such as <ENTER>, <SHIFT_TAB>, <CTRL_C>, <CTRL_J>."
+                "Literal text tokens and/or named tokens such as <ENTER>, <SHIFT_TAB>, or <CTRL_U>."
             },
             displayText: {
               type: "string",
@@ -177,7 +189,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
               type: "array",
               items: { type: "string" },
               description:
-                "Updated literal text tokens and/or named tokens such as <ENTER>, <SHIFT_TAB>, <CTRL_C>, <CTRL_J>."
+                "Updated literal text tokens and/or named tokens such as <ENTER>, <SHIFT_TAB>, or <CTRL_U>."
             },
             displayText: {
               type: "string",

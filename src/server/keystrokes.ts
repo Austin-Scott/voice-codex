@@ -1,29 +1,30 @@
 import type { TerminalKeyToken } from "../shared/protocol.js";
 
-const KEY_MAP: Record<string, string> = {
-  "<ENTER>": "\r",
-  "<ESC>": "\u001b",
-  "<TAB>": "\t",
-  "<SHIFT_TAB>": "\u001b[Z",
-  "<BACKSPACE>": "\u007f",
-  "<CTRL_C>": "\u0003",
-  "<CTRL_J>": "\n",
-  "<UP>": "\u001b[A",
-  "<DOWN>": "\u001b[B",
-  "<RIGHT>": "\u001b[C",
-  "<LEFT>": "\u001b[D"
+const STATIC_KEY_MAP: Record<string, string> = {
+  ENTER: "\r",
+  ESC: "\u001b",
+  TAB: "\t",
+  SHIFT_TAB: "\u001b[Z",
+  BACKSPACE: "\u007f",
+  UP: "\u001b[A",
+  DOWN: "\u001b[B",
+  RIGHT: "\u001b[C",
+  LEFT: "\u001b[D",
+  DELETE: "\u001b[3~",
+  HOME: "\u001b[H",
+  END: "\u001b[F",
+  PAGE_UP: "\u001b[5~",
+  PAGE_DOWN: "\u001b[6~"
 };
 const KEY_TOKEN_PATTERN =
-  /(<(?:ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)>|\[(?:ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)\]|\{(?:ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)\}|\\r\\n|\\r|\\n|\r\n|\r|\n)/gi;
-const BARE_KEY_PATTERN =
-  /^(?:(?:PRESS|HIT|SEND)\s+)?(?:THE\s+)?(ENTER|RETURN|ESCAPE|ESC|SHIFT[\s+_-]?TAB|TAB|BACKSPACE|CTRL[\s+_-]?[CJ]|CONTROL[\s+_-]?[CJ]|UP|DOWN|LEFT|RIGHT)(?:\s+KEY)?$/i;
+  /(<[^<>\r\n]+>|\[[A-Za-z0-9\s+_-]+\]|\{[A-Za-z0-9\s+_-]+\}|\\r\\n|\\r|\\n|\r\n|\r|\n)/g;
 
 export function encodeKeystrokes(tokens: TerminalKeyToken[]): string {
   return tokens.flatMap(splitKeyTokens).map(encodeKeystrokeToken).join("");
 }
 
 export function encodeKeystrokeToken(token: TerminalKeyToken): string {
-  return KEY_MAP[token] ?? token;
+  return encodeSpecialKeyToken(token) ?? token;
 }
 
 export function normalizeKeystrokes(value: unknown): TerminalKeyToken[] {
@@ -52,7 +53,7 @@ export function normalizeProposalKeystrokes(
 }
 
 export function isSpecialKeyToken(token: TerminalKeyToken): boolean {
-  return Object.prototype.hasOwnProperty.call(KEY_MAP, token);
+  return encodeSpecialKeyToken(token) !== undefined;
 }
 
 function splitKeyTokens(value: string): TerminalKeyToken[] {
@@ -82,33 +83,81 @@ function canonicalizeKeyToken(value: string): TerminalKeyToken {
 
   const token = value.match(/^[<[{](.+)[>\]}]$/);
   if (!token) {
-    return value;
+    return canonicalizeBareKey(value) ?? value;
   }
 
-  return canonicalizeBareKey(token[1]) ?? value;
+  return token[1] ? canonicalizeBareKey(token[1]) ?? value : value;
 }
 
 function canonicalizeBareKey(value: string): TerminalKeyToken | undefined {
-  const match = value.trim().replace(/\s*\+\s*/g, "+").match(BARE_KEY_PATTERN);
-  if (!match) {
+  const keyName = normalizeKeyName(value);
+  return keyName ? `<${keyName}>` : undefined;
+}
+
+function encodeSpecialKeyToken(value: string): string | undefined {
+  const keyName = normalizeKeyName(stripTokenWrapper(value) ?? value);
+  if (!keyName) {
     return undefined;
   }
 
-  let name = match[1].toUpperCase().replace(/[\s+_-]/g, "_").replace(/^CONTROL_?/, "CTRL_");
-  if (name === "CTRLC") {
-    name = "CTRL_C";
+  const staticValue = STATIC_KEY_MAP[keyName];
+  if (staticValue !== undefined) {
+    return staticValue;
   }
-  if (name === "CTRLJ") {
-    name = "CTRL_J";
+
+  const control = keyName.match(/^CTRL_([A-Z])$/);
+  if (control?.[1]) {
+    return String.fromCharCode(control[1].charCodeAt(0) - 64);
   }
-  if (name === "SHIFTTAB") {
-    name = "SHIFT_TAB";
+
+  return undefined;
+}
+
+function normalizeKeyName(value: string): string | undefined {
+  const stripped = value
+    .trim()
+    .replace(/\bplus\b/gi, "+")
+    .replace(/\s*\+\s*/g, "+")
+    .replace(/^(?:press|hit|send)\s+(?:the\s+)?/i, "")
+    .replace(/\s+key$/i, "");
+  if (!stripped) {
+    return undefined;
   }
+
+  const name = stripped.toUpperCase().replace(/[\s+_-]+/g, "_");
   if (name === "RETURN") {
-    return "<ENTER>";
+    return "ENTER";
   }
   if (name === "ESCAPE") {
-    return "<ESC>";
+    return "ESC";
   }
-  return `<${name}>`;
+  if (name === "SHIFTTAB") {
+    return "SHIFT_TAB";
+  }
+  if (name === "PGUP") {
+    return "PAGE_UP";
+  }
+  if (name === "PGDN") {
+    return "PAGE_DOWN";
+  }
+
+  const arrow = name.match(/^(UP|DOWN|LEFT|RIGHT)_?ARROW$/);
+  if (arrow?.[1]) {
+    return arrow[1];
+  }
+
+  const control = name.match(/^(?:CTRL|CONTROL)_?([A-Z])$/);
+  if (control?.[1]) {
+    return `CTRL_${control[1]}`;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(STATIC_KEY_MAP, name)) {
+    return name;
+  }
+
+  return undefined;
+}
+
+function stripTokenWrapper(value: string): string | undefined {
+  return value.match(/^[<[{](.+)[>\]}]$/)?.[1];
 }

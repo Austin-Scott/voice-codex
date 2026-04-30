@@ -174,6 +174,7 @@ function setupVoiceAgent(): void {
   voiceAgent = new RealtimeVoiceAgent(
     {
       getThreads: () => ({ threads: threads.value, activeThreadId: activeThreadId.value }),
+      getPendingProposals: () => pendingProposals.value,
       getTerminalContext,
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
@@ -346,6 +347,11 @@ function handleServerEvent(event: ServerEvent): void {
 
   if (event.type === "proposal.created") {
     upsertProposal(event.proposal);
+    return;
+  }
+
+  if (event.type === "proposals") {
+    proposals.value = event.proposals;
     return;
   }
 

@@ -290,10 +290,7 @@ wss.on("connection", (ws) => {
     threads: threads.list(),
     activeThreadId: threads.getActiveThreadId()
   });
-
-  for (const proposal of proposals.listPending()) {
-    send(ws, { type: "proposal.created", proposal });
-  }
+  send(ws, { type: "proposals", proposals: proposals.listPending() });
 
   ws.on("message", (raw) => {
     handleClientEvent(ws, raw.toString()).catch((error: unknown) => {

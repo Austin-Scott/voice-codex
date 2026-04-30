@@ -113,6 +113,11 @@ export interface ProposalUpdatedEvent {
   proposal: KeystrokeProposal;
 }
 
+export interface ProposalsEvent {
+  type: "proposals";
+  proposals: KeystrokeProposal[];
+}
+
 export interface ErrorEvent {
   type: "error";
   message: string;
@@ -127,6 +132,7 @@ export type ServerEvent =
   | ProposalCreatedEvent
   | ProposalResolvedEvent
   | ProposalUpdatedEvent
+  | ProposalsEvent
   | ErrorEvent;
 
 export type ClientEvent =

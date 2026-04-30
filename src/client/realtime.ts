@@ -1,4 +1,4 @@
-import type { CodexThreadSummary, DirectoryListing } from "@shared/protocol";
+import type { CodexThreadSummary, DirectoryListing, KeystrokeProposal } from "@shared/protocol";
 import {
   browseDirectories,
   closeThread,
@@ -40,6 +40,7 @@ export interface TerminalContext {
 
 export interface RealtimeToolsState {
   getThreads: () => { threads: CodexThreadSummary[]; activeThreadId?: string };
+  getPendingProposals: () => KeystrokeProposal[];
   getTerminalContext: (aboveVisibleLines: number) => TerminalContext;
   setActiveThread: (threadId: string) => void;
   setThreads: (threads: CodexThreadSummary[], activeThreadId?: string) => void;
@@ -191,6 +192,10 @@ export class RealtimeVoiceAgent {
   private async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     if (name === "list_threads") {
       return this.toolsState.getThreads();
+    }
+
+    if (name === "list_pending_proposals") {
+      return { proposals: this.toolsState.getPendingProposals() };
     }
 
     if (name === "read_terminal") {
