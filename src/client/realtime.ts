@@ -15,9 +15,26 @@ import {
 interface RealtimeEvent {
   type: string;
   item?: RealtimeFunctionCall;
+  error?: RealtimeError;
   response?: {
+    status?: string;
+    status_details?: RealtimeStatusDetails;
     output?: RealtimeFunctionCall[];
   };
+}
+
+interface RealtimeError {
+  type?: string;
+  code?: string;
+  message?: string;
+  param?: string;
+  event_id?: string;
+}
+
+interface RealtimeStatusDetails {
+  type?: string;
+  reason?: string;
+  error?: RealtimeError;
 }
 
 interface RealtimeFunctionCall {
@@ -61,6 +78,9 @@ export class RealtimeVoiceAgent {
   private connected = false;
   private connectPromise: Promise<void> | undefined;
   private handledCallIds = new Set<string>();
+  private closingIntentionally = false;
+  private intentionalCloseStatus = "Voice agent disconnected";
+  private connectionErrorReported = false;
 
   constructor(
     private readonly toolsState: RealtimeToolsState,
@@ -87,8 +107,18 @@ export class RealtimeVoiceAgent {
 
   private async connect(): Promise<void> {
     this.onStatus("Connecting voice agent");
+    this.closingIntentionally = false;
+    this.intentionalCloseStatus = "Voice agent disconnected";
+    this.connectionErrorReported = false;
     const pc = new RTCPeerConnection();
     this.pc = pc;
+    pc.addEventListener("connectionstatechange", () => {
+      if (pc.connectionState === "failed") {
+        this.handleUnexpectedDisconnect("Voice agent WebRTC connection failed.");
+      } else if (pc.connectionState === "closed" && !this.closingIntentionally) {
+        this.handleUnexpectedDisconnect("Voice agent WebRTC connection closed.");
+      }
+    });
 
     const remoteAudio = new Audio();
     remoteAudio.autoplay = true;
@@ -118,17 +148,31 @@ export class RealtimeVoiceAgent {
       this.connected = true;
       this.onStatus("Voice agent ready");
     });
+    dc.addEventListener("error", () => {
+      if (this.connected) {
+        this.handleUnexpectedDisconnect("Voice agent data channel failed.");
+      }
+    });
     dc.addEventListener("message", (message) => this.handleMessage(message.data));
     dc.addEventListener("close", () => {
       this.connected = false;
-      this.onStatus("Voice agent disconnected");
+      if (this.closingIntentionally) {
+        this.onStatus(this.intentionalCloseStatus);
+      } else {
+        this.handleUnexpectedDisconnect("Voice agent connection closed unexpectedly.");
+      }
     });
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    const answerSdp = await createRealtimeAnswer(offer.sdp ?? "");
-    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
-    await channelOpen;
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const answerSdp = await createRealtimeAnswer(offer.sdp ?? "");
+      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      await channelOpen;
+    } catch (error) {
+      this.cleanupConnection();
+      throw error;
+    }
   }
 
   setListening(active: boolean): void {
@@ -139,15 +183,11 @@ export class RealtimeVoiceAgent {
   }
 
   disconnect(): void {
+    this.closingIntentionally = true;
+    this.intentionalCloseStatus = "Voice agent idle";
     this.setListening(false);
-    this.micTrack?.stop();
-    this.dc?.close();
-    this.pc?.close();
-    this.micTrack = undefined;
-    this.dc = undefined;
-    this.pc = undefined;
+    this.cleanupConnection();
     this.connectPromise = undefined;
-    this.connected = false;
     this.handledCallIds.clear();
     this.onStatus("Voice agent idle");
   }
@@ -165,7 +205,15 @@ export class RealtimeVoiceAgent {
       return;
     }
 
+    if (event.type === "error") {
+      this.handleRealtimeError(event.error);
+      return;
+    }
+
     if (event.type === "response.done") {
+      if (event.response?.status === "failed") {
+        this.handleRealtimeError(event.response.status_details?.error, event.response.status_details);
+      }
       for (const item of event.response?.output ?? []) {
         if (item.type === "function_call") {
           void this.handleFunctionCall(item);
@@ -348,4 +396,65 @@ export class RealtimeVoiceAgent {
     );
     this.dc.send(JSON.stringify({ type: "response.create" }));
   }
+
+  private handleRealtimeError(
+    error: RealtimeError | undefined,
+    statusDetails?: RealtimeStatusDetails
+  ): void {
+    const message = formatRealtimeError(error, statusDetails);
+    this.onError(message);
+    if (isQuotaOrBillingError(message, error?.code)) {
+      this.closingIntentionally = true;
+      this.intentionalCloseStatus = "Voice agent stopped: billing or quota error";
+      this.cleanupConnection();
+      this.onStatus(this.intentionalCloseStatus);
+    }
+  }
+
+  private handleUnexpectedDisconnect(message: string): void {
+    if (this.closingIntentionally) {
+      return;
+    }
+
+    this.connected = false;
+    this.onStatus("Voice agent disconnected");
+    if (!this.connectionErrorReported) {
+      this.connectionErrorReported = true;
+      this.onError(message);
+    }
+  }
+
+  private cleanupConnection(): void {
+    this.micTrack?.stop();
+    this.dc?.close();
+    this.pc?.close();
+    this.micTrack = undefined;
+    this.dc = undefined;
+    this.pc = undefined;
+    this.connected = false;
+  }
+}
+
+function formatRealtimeError(
+  error: RealtimeError | undefined,
+  statusDetails?: RealtimeStatusDetails
+): string {
+  const message = error?.message?.trim();
+  const code = error?.code?.trim();
+  const type = error?.type?.trim();
+  const reason = statusDetails?.reason?.trim();
+  const detail = [code, type, reason].filter(Boolean).join(", ");
+  const base = message || "The voice agent returned an error.";
+  return detail ? `Voice agent error: ${base} (${detail})` : `Voice agent error: ${base}`;
+}
+
+function isQuotaOrBillingError(message: string, code?: string): boolean {
+  const value = `${code ?? ""} ${message}`.toLowerCase();
+  return (
+    value.includes("quota") ||
+    value.includes("billing") ||
+    value.includes("credit") ||
+    value.includes("insufficient") ||
+    value.includes("exceeded")
+  );
 }
