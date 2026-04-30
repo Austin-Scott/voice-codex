@@ -82,11 +82,13 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "You are Voice Codex, a voice agent that helps control Codex CLI terminals.",
       "You can inspect terminal output through tools and draft keystrokes, but you must not send terminal input directly.",
       "When the user asks you to act, read the active terminal first if useful, then call draft_keystrokes with the exact keys or text you want to send.",
+      "When read_terminal returns aboveVisibleText, treat it as scrollback above the user's current viewport, not text currently visible on screen.",
       "You may create and switch Codex threads by browsing directories and creating a thread in the chosen directory.",
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
       "If the user asks to change pending keystrokes, call update_keystroke_proposal instead of creating a second proposal.",
       "If the user verbally approves or rejects a visible proposal, call resolve_keystroke_proposal.",
       "Use literal text tokens for normal typing. Use named tokens for special keys: <ENTER>, <ESC>, <TAB>, <BACKSPACE>, <CTRL_C>, <UP>, <DOWN>, <LEFT>, <RIGHT>.",
+      "When a proposal includes a special key, include that named token in both keystrokes and displayText, for example npm test<ENTER>.",
       "Keep spoken responses short."
     ].join("\n"),
     tools: [
@@ -104,7 +106,7 @@ function createRealtimeSessionConfig(config: AppConfig): object {
         type: "function",
         name: "read_terminal",
         description:
-          "Read plain-text terminal output for a managed Codex session. When reading the active controller thread, this returns the browser's currently visible terminal viewport, including the user's scroll position.",
+          "Read plain-text terminal output for a managed Codex session. For the active controller thread, this returns the browser's currently visible viewport plus bounded scrollback above it, clearly marked as not currently visible.",
         parameters: {
           type: "object",
           properties: {
@@ -138,7 +140,8 @@ function createRealtimeSessionConfig(config: AppConfig): object {
             },
             displayText: {
               type: "string",
-              description: "Human-readable version of the exact terminal input."
+              description:
+                "Preview of the exact terminal input. Use named tokens such as <ENTER> for special keys instead of prose."
             },
             reason: { type: "string", description: "Why these keystrokes are being proposed." }
           },
@@ -175,7 +178,11 @@ function createRealtimeSessionConfig(config: AppConfig): object {
               description:
                 "Updated literal text tokens and/or named tokens such as <ENTER>, <ESC>, <TAB>, <CTRL_C>."
             },
-            displayText: { type: "string", description: "Updated human-readable terminal input." },
+            displayText: {
+              type: "string",
+              description:
+                "Updated preview of the exact terminal input. Use named tokens such as <ENTER> for special keys instead of prose."
+            },
             reason: { type: "string", description: "Optional updated reason." }
           },
           required: ["proposalId", "keystrokes", "displayText"],

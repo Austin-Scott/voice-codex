@@ -33,7 +33,7 @@ import {
   type PedalHandlers,
   type TouchMappings
 } from "./pedal";
-import { RealtimeVoiceAgent } from "./realtime";
+import { RealtimeVoiceAgent, type TerminalContext } from "./realtime";
 import { VoiceCodexSocket } from "./socket";
 import { getLatestContentScrollLine, shouldRenderTerminalFrame } from "./terminalFrames";
 
@@ -174,7 +174,7 @@ function setupVoiceAgent(): void {
   voiceAgent = new RealtimeVoiceAgent(
     {
       getThreads: () => ({ threads: threads.value, activeThreadId: activeThreadId.value }),
-      getVisibleTerminalText,
+      getTerminalContext,
       setActiveThread: (threadId) => {
         activeThreadId.value = threadId;
         void loadThreadSnapshot(threadId);
@@ -726,30 +726,64 @@ function scrollToLatestTerminalContent(): void {
   );
 }
 
-function getVisibleTerminalText(): {
-  threadId?: string;
-  text: string;
-  startLine: number;
-  endLine: number;
-} {
+function getTerminalContext(aboveVisibleLines: number): TerminalContext {
   if (!terminal) {
-    return { threadId: activeThreadId.value, text: "", startLine: 0, endLine: 0 };
+    return {
+      threadId: activeThreadId.value,
+      text: "",
+      visibleText: "",
+      aboveVisibleText: "",
+      visibleStartLine: 0,
+      visibleEndLine: 0,
+      aboveVisibleStartLine: 0,
+      aboveVisibleEndLine: 0
+    };
   }
 
   const buffer = terminal.buffer.active;
-  const startLine = buffer.viewportY;
-  const endLine = Math.min(buffer.length - 1, startLine + terminal.rows - 1);
+  const visibleStartLine = buffer.viewportY;
+  const visibleEndLine = Math.min(buffer.length - 1, visibleStartLine + terminal.rows - 1);
+  const aboveVisibleEndLine = Math.max(-1, visibleStartLine - 1);
+  const aboveVisibleStartLine =
+    aboveVisibleEndLine >= 0 ? Math.max(0, aboveVisibleEndLine - Math.max(0, aboveVisibleLines) + 1) : 0;
+  const visibleText = readTerminalLines(visibleStartLine, visibleEndLine);
+  const aboveVisibleText =
+    aboveVisibleEndLine >= aboveVisibleStartLine
+      ? readTerminalLines(aboveVisibleStartLine, aboveVisibleEndLine)
+      : "";
+  const text = [
+    aboveVisibleText
+      ? `[Not currently visible: scrollback above the user's viewport, lines ${aboveVisibleStartLine}-${aboveVisibleEndLine}]\n${aboveVisibleText}`
+      : "",
+    `[Currently visible to the user, lines ${visibleStartLine}-${visibleEndLine}]\n${visibleText}`
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return {
+    threadId: activeThreadId.value,
+    text,
+    visibleText,
+    aboveVisibleText,
+    visibleStartLine,
+    visibleEndLine,
+    aboveVisibleStartLine,
+    aboveVisibleEndLine
+  };
+}
+
+function readTerminalLines(startLine: number, endLine: number): string {
+  if (!terminal || endLine < startLine) {
+    return "";
+  }
+
+  const buffer = terminal.buffer.active;
   const lines: string[] = [];
   for (let index = startLine; index <= endLine; index += 1) {
     lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
   }
 
-  return {
-    threadId: activeThreadId.value,
-    text: lines.join("\n").replace(/\s+$/g, ""),
-    startLine,
-    endLine
-  };
+  return lines.join("\n").replace(/\s+$/g, "");
 }
 
 async function requestWakeLock(): Promise<void> {

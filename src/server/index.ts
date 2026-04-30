@@ -11,7 +11,7 @@ import type { ClientEvent, ServerEvent } from "../shared/protocol.js";
 import { certificatePaths, ensureCertificate } from "./certs.js";
 import { loadConfig } from "./config.js";
 import { assertExistingDirectory, createDirectory, listDirectories } from "./fsBrowser.js";
-import { normalizeKeystrokes } from "./keystrokes.js";
+import { normalizeProposalKeystrokes } from "./keystrokes.js";
 import { createRealtimeAnswer, transcribeAudio } from "./openai.js";
 import { PairingManager, SESSION_COOKIE } from "./pairing.js";
 import { ProposalManager } from "./proposals.js";
@@ -186,10 +186,11 @@ app.get(
 
 app.post("/api/proposals", requireController, (req, res) => {
   try {
+    const displayText = String(req.body?.displayText ?? "");
     const proposal = proposals.create({
       threadId: String(req.body?.threadId ?? ""),
-      keystrokes: normalizeKeystrokes(req.body?.keystrokes),
-      displayText: String(req.body?.displayText ?? ""),
+      keystrokes: normalizeProposalKeystrokes(req.body?.keystrokes, displayText),
+      displayText,
       reason: String(req.body?.reason ?? "")
     });
     res.status(201).json({ proposal });
@@ -210,9 +211,10 @@ app.post("/api/proposals/:id/resolve", requireController, (req, res) => {
 
 app.patch("/api/proposals/:id", requireController, (req, res) => {
   try {
+    const displayText = String(req.body?.displayText ?? "");
     const proposal = proposals.update(String(req.params.id), {
-      keystrokes: normalizeKeystrokes(req.body?.keystrokes),
-      displayText: String(req.body?.displayText ?? ""),
+      keystrokes: normalizeProposalKeystrokes(req.body?.keystrokes, displayText),
+      displayText,
       reason: typeof req.body?.reason === "string" ? req.body.reason : undefined
     });
     res.json({ proposal });
@@ -386,7 +388,7 @@ async function handleClientEvent(ws: WebSocket, raw: string): Promise<void> {
     try {
       proposals.update(event.proposalId, {
         displayText: event.displayText,
-        keystrokes: event.keystrokes
+        keystrokes: normalizeProposalKeystrokes(event.keystrokes, event.displayText)
       });
     } catch (error) {
       send(ws, { type: "error", message: error instanceof Error ? error.message : String(error) });

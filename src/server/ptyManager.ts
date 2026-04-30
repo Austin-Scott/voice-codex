@@ -9,10 +9,12 @@ import type {
   ThreadState
 } from "../shared/protocol.js";
 import type { AppConfig } from "./config.js";
-import { encodeKeystrokes } from "./keystrokes.js";
+import { encodeKeystrokeToken, isSpecialKeyToken, normalizeKeystrokes } from "./keystrokes.js";
 import { TerminalScreen } from "./terminalScreen.js";
 
 const FRAME_INTERVAL_MS = 75;
+const TEXT_CHUNK_DELAY_MS = 25;
+const SPECIAL_KEY_DELAY_MS = 150;
 
 interface ManagedThread {
   id: string;
@@ -21,6 +23,7 @@ interface ManagedThread {
   state: ThreadState;
   process?: IPty;
   terminal: TerminalScreen;
+  inputQueue: Promise<void>;
   frameTimer?: NodeJS.Timeout;
   exitCode?: number;
   error?: string;
@@ -76,6 +79,7 @@ export class PtyThreadManager extends EventEmitter {
       cwd: input.cwd,
       state: "starting",
       terminal: new TerminalScreen(100, 30),
+      inputQueue: Promise.resolve(),
       createdAt: now,
       updatedAt: now
     };
@@ -175,7 +179,21 @@ export class PtyThreadManager extends EventEmitter {
   }
 
   writeKeystrokes(id: string, tokens: TerminalKeyToken[]): boolean {
-    return this.write(id, encodeKeystrokes(tokens));
+    const thread = this.threads.get(id);
+    if (!thread?.process || thread.state !== "running") {
+      return false;
+    }
+
+    const chunks = normalizeKeystrokes(tokens)
+      .map((token) => ({
+        data: encodeKeystrokeToken(token),
+        special: isSpecialKeyToken(token)
+      }))
+      .filter((chunk) => chunk.data.length > 0);
+    thread.inputQueue = thread.inputQueue
+      .catch(() => undefined)
+      .then(() => writeChunks(thread, chunks));
+    return true;
   }
 
   private append(thread: ManagedThread, data: string): void {
@@ -250,4 +268,25 @@ function quoteShellPart(value: string): string {
   }
 
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+async function writeChunks(
+  thread: ManagedThread,
+  chunks: Array<{ data: string; special: boolean }>
+): Promise<void> {
+  for (const [index, chunk] of chunks.entries()) {
+    if (index > 0) {
+      await delay(chunk.special ? SPECIAL_KEY_DELAY_MS : TEXT_CHUNK_DELAY_MS);
+    }
+    if (!thread.process || thread.state !== "running") {
+      return;
+    }
+    thread.process.write(chunk.data);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

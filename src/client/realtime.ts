@@ -26,9 +26,20 @@ interface RealtimeFunctionCall {
   arguments?: string;
 }
 
+export interface TerminalContext {
+  threadId?: string;
+  text: string;
+  visibleText: string;
+  aboveVisibleText: string;
+  visibleStartLine: number;
+  visibleEndLine: number;
+  aboveVisibleStartLine: number;
+  aboveVisibleEndLine: number;
+}
+
 export interface RealtimeToolsState {
   getThreads: () => { threads: CodexThreadSummary[]; activeThreadId?: string };
-  getVisibleTerminalText: () => { threadId?: string; text: string; startLine: number; endLine: number };
+  getTerminalContext: (aboveVisibleLines: number) => TerminalContext;
   setActiveThread: (threadId: string) => void;
   showDirectoryListing: (listing: DirectoryListing) => void;
   showFolderPicker: () => void;
@@ -185,14 +196,20 @@ export class RealtimeVoiceAgent {
       if (!threadId) {
         return { error: "No active Codex thread is selected." };
       }
-      const visible = this.toolsState.getVisibleTerminalText();
-      if (!args.threadId || args.threadId === visible.threadId) {
+      const context = this.toolsState.getTerminalContext(Number(args.lines ?? 120));
+      if (!args.threadId || args.threadId === context.threadId) {
         return {
-          threadId: visible.threadId,
-          text: visible.text,
-          source: "visible_browser_viewport",
-          startLine: visible.startLine,
-          endLine: visible.endLine
+          threadId: context.threadId,
+          text: context.text,
+          visibleText: context.visibleText,
+          aboveVisibleText: context.aboveVisibleText,
+          source: "browser_viewport_with_above_visible_scrollback",
+          visibleStartLine: context.visibleStartLine,
+          visibleEndLine: context.visibleEndLine,
+          aboveVisibleStartLine: context.aboveVisibleStartLine,
+          aboveVisibleEndLine: context.aboveVisibleEndLine,
+          note:
+            "aboveVisibleText is terminal scrollback above the user's current viewport and is not currently visible to the user. visibleText is what is currently displayed."
         };
       }
       return readTerminal(threadId, Number(args.lines ?? 120));
