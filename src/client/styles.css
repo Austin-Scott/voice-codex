@@ -223,11 +223,10 @@ input {
   left: 50%;
   bottom: 6px;
   display: grid;
-  grid-template-columns:
-    clamp(30px, 8vw, 42px)
-    clamp(36px, 10vw, 50px)
-    clamp(44px, 13vw, 62px)
-    clamp(30px, 8vw, 42px);
+  grid-template-areas:
+    "tab slash dollar paste"
+    "bksp bksp space space";
+  grid-template-columns: repeat(4, clamp(30px, 8vw, 42px));
   gap: 4px;
   transform: translateX(-50%);
 }
@@ -281,7 +280,28 @@ input {
 }
 
 .touch-space-key {
+  grid-area: space;
   min-width: 0;
+}
+
+.touch-tab-key {
+  grid-area: tab;
+}
+
+.touch-slash-key {
+  grid-area: slash;
+}
+
+.touch-dollar-key {
+  grid-area: dollar;
+}
+
+.touch-bksp-key {
+  grid-area: bksp;
+}
+
+.touch-paste-key {
+  grid-area: paste;
 }
 
 .touch-ptt {

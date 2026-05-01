@@ -1577,11 +1577,17 @@ function releaseOverlayPtt(): void {
         </div>
 
         <div class="touch-zone touch-center-controls">
-          <button class="touch-key touch-key-small" type="button" aria-label="Tab" @click="sendTerminal('\t')">
+          <button class="touch-key touch-key-small touch-tab-key" type="button" aria-label="Tab" @click="sendTerminal('\t')">
             Tab
           </button>
+          <button class="touch-key touch-key-small touch-slash-key" type="button" aria-label="Slash" @click="sendTerminal('/')">
+            /
+          </button>
+          <button class="touch-key touch-key-small touch-dollar-key" type="button" aria-label="Dollar sign" @click="sendTerminal('$')">
+            $
+          </button>
           <button
-            class="touch-key touch-key-small"
+            class="touch-key touch-key-small touch-bksp-key"
             type="button"
             aria-label="Backspace"
             @click="sendTerminal('\u007f')"
@@ -1592,7 +1598,7 @@ function releaseOverlayPtt(): void {
             Space
           </button>
           <button
-            class="touch-key touch-key-small"
+            class="touch-key touch-key-small touch-paste-key"
             type="button"
             aria-label="Paste clipboard"
             @click="pasteClipboardToTerminal"
