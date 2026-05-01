@@ -5,10 +5,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "v
 import type {
   CodexThreadSummary,
   DirectoryListing,
+  ImageModalRequest,
   KeystrokeProposal,
   ServerEvent,
   SessionResponse,
-  TerminalFramePayload
+  TerminalFramePayload,
+  TurnSummary
 } from "@shared/protocol";
 import {
   browseDirectories,
@@ -21,6 +23,7 @@ import {
   resolveProposal,
   selectThread,
   stopThread,
+  synthesizeSpeech,
   transcribe
 } from "./api";
 import {
@@ -47,6 +50,7 @@ const whisperStatus = ref("Whisper idle");
 const threads = ref<CodexThreadSummary[]>([]);
 const activeThreadId = ref<string | undefined>();
 const proposals = ref<KeystrokeProposal[]>([]);
+const turnSummaries = ref<TurnSummary[]>([]);
 const terminalElement = ref<HTMLDivElement | null>(null);
 const captureBinding = ref<keyof PedalBindings | undefined>();
 const qrHostInput = ref("");
@@ -57,8 +61,11 @@ const newDirectoryName = ref("");
 const touchOverlayEnabled = ref(loadTouchOverlayEnabled());
 const overlayPtt = ref<"agent" | "whisper" | undefined>();
 const alwaysListening = ref(false);
+const spokenSummariesEnabled = ref(loadSpokenSummariesEnabled());
 const fullscreenActive = ref(Boolean(document.fullscreenElement));
 const pendingClipboardCopy = ref<{ text: string; message: string } | undefined>();
+const imageModalRequest = ref<ImageModalRequest | undefined>();
+const imageModalIndex = ref(0);
 const bindings = reactive<PedalBindings>(loadPedalBindings());
 
 let socket: VoiceCodexSocket | undefined;
@@ -74,6 +81,8 @@ let whisperChunks: Blob[] = [];
 let agentIdleTimer: ReturnType<typeof window.setTimeout> | undefined;
 let wakeLock: MinimalWakeLockSentinel | undefined;
 let pageWasHidden = document.visibilityState === "hidden";
+let summarySpeechQueue = Promise.resolve();
+let controllerSessionCheckTimer: ReturnType<typeof window.setTimeout> | undefined;
 const lastFrameSequences = new Map<string, number>();
 
 const isController = computed(() => Boolean(session.value?.isController));
@@ -81,6 +90,8 @@ const activeThread = computed(() => threads.value.find((thread) => thread.id ===
 const pendingProposals = computed(() =>
   proposals.value.filter((proposal) => proposal.status === "pending")
 );
+const recentSummaries = computed(() => turnSummaries.value.slice(0, 3));
+const imageModalImage = computed(() => imageModalRequest.value?.images[imageModalIndex.value]);
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown, true);
@@ -107,6 +118,7 @@ onBeforeUnmount(() => {
   pedal?.dispose();
   releaseOverlayPtt();
   clearAgentIdleTimer();
+  clearControllerSessionCheckTimer();
   voiceAgent?.disconnect();
   void releaseWakeLock();
   socket?.close();
@@ -199,7 +211,17 @@ function setupVoiceAgent(): void {
       },
       hideFolderPicker: () => {
         folderPickerOpen.value = false;
-      }
+      },
+      getTurnSummaries: (threadId) =>
+        threadId
+          ? turnSummaries.value.filter((summary) => summary.threadId === threadId)
+          : turnSummaries.value,
+      getLatestTurnSummary: (threadId) =>
+        (threadId
+          ? turnSummaries.value.filter((summary) => summary.threadId === threadId)
+          : turnSummaries.value)[0],
+      getImageModalState,
+      controlImageModal
     },
     (status) => {
       agentStatus.value = status;
@@ -241,6 +263,8 @@ function connectSocket(): void {
           errorMessage.value = "";
         }
         void loadThreadSnapshot(activeThreadId.value);
+      } else if (status === "closed" && isController.value) {
+        scheduleControllerSessionCheck();
       }
     },
     (message) => {
@@ -343,8 +367,89 @@ function handleServerEvent(event: ServerEvent): void {
     return;
   }
 
+  if (event.type === "turn_summaries") {
+    turnSummaries.value = event.summaries;
+    return;
+  }
+
+  if (event.type === "turn_summary.created") {
+    upsertTurnSummary(event.summary);
+    enqueueSummarySpeech(event.summary);
+    return;
+  }
+
+  if (event.type === "image_modal.open") {
+    openImageModal(event.request);
+    return;
+  }
+
   if (event.type === "error") {
     errorMessage.value = event.message;
+  }
+}
+
+function scheduleControllerSessionCheck(): void {
+  if (controllerSessionCheckTimer) {
+    return;
+  }
+
+  controllerSessionCheckTimer = window.setTimeout(() => {
+    controllerSessionCheckTimer = undefined;
+    void verifyControllerSession();
+  }, 750);
+}
+
+async function verifyControllerSession(): Promise<void> {
+  try {
+    const nextSession = await getSession(qrHostInput.value);
+    if (nextSession.isController) {
+      session.value = nextSession;
+      syncQrHostInput();
+      return;
+    }
+
+    session.value = nextSession;
+    syncQrHostInput();
+    resetControllerRuntime();
+    statusMessage.value = "Waiting for pairing";
+    errorMessage.value = "Controller session expired. Pair this browser again.";
+  } catch {
+    if (isController.value) {
+      scheduleControllerSessionCheck();
+    }
+  }
+}
+
+function resetControllerRuntime(): void {
+  clearControllerSessionCheckTimer();
+  clearAgentIdleTimer();
+  releaseOverlayPtt();
+  voiceAgent?.disconnect();
+  voiceAgent = undefined;
+  pedal?.dispose();
+  pedal = undefined;
+  resizeObserver?.disconnect();
+  resizeObserver = undefined;
+  terminal?.dispose();
+  terminal = undefined;
+  fitAddon = undefined;
+  socket?.close();
+  socket = undefined;
+  activeThreadId.value = undefined;
+  threads.value = [];
+  proposals.value = [];
+  turnSummaries.value = [];
+  folderPickerOpen.value = false;
+  settingsOpen.value = false;
+  imageModalRequest.value = undefined;
+  pendingClipboardCopy.value = undefined;
+  lastFrameSequences.clear();
+}
+
+function clearControllerSessionCheckTimer(): void {
+  if (controllerSessionCheckTimer) {
+    window.clearTimeout(controllerSessionCheckTimer);
+    controllerSessionCheckTimer = undefined;
   }
 }
 
@@ -365,6 +470,7 @@ async function createNewThread(): Promise<void> {
     folderPickerOpen.value = false;
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error);
+    void verifyControllerSession();
   }
 }
 
@@ -826,6 +932,118 @@ function removeProposal(proposalId: string): void {
   }
 }
 
+function upsertTurnSummary(summary: TurnSummary): void {
+  const index = turnSummaries.value.findIndex((existing) => existing.id === summary.id);
+  if (index >= 0) {
+    turnSummaries.value.splice(index, 1);
+  }
+  turnSummaries.value.unshift(summary);
+  if (turnSummaries.value.length > 80) {
+    turnSummaries.value.length = 80;
+  }
+}
+
+function enqueueSummarySpeech(summary: TurnSummary): void {
+  if (!spokenSummariesEnabled.value) {
+    return;
+  }
+
+  summarySpeechQueue = summarySpeechQueue
+    .catch(() => undefined)
+    .then(() => playSummarySpeech(summary))
+    .catch((error: unknown) => {
+      errorMessage.value = error instanceof Error ? error.message : String(error);
+    });
+}
+
+async function playSummarySpeech(summary: TurnSummary): Promise<void> {
+  const blob = await synthesizeSpeech(`${summary.threadName}. ${summary.summary}`);
+  const url = URL.createObjectURL(blob);
+  try {
+    const audio = new Audio(url);
+    await new Promise<void>((resolve, reject) => {
+      audio.addEventListener("ended", () => resolve(), { once: true });
+      audio.addEventListener("error", () => reject(new Error("Unable to play summary audio.")), {
+        once: true
+      });
+      audio.play().catch(reject);
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function openImageModal(request: ImageModalRequest): void {
+  imageModalRequest.value = request;
+  imageModalIndex.value = 0;
+}
+
+function closeImageModal(): void {
+  imageModalRequest.value = undefined;
+  imageModalIndex.value = 0;
+}
+
+function selectImageModalIndex(index: number): void {
+  const request = imageModalRequest.value;
+  if (!request) {
+    return;
+  }
+
+  imageModalIndex.value = Math.max(0, Math.min(request.images.length - 1, index));
+}
+
+function getImageModalState(): {
+  open: boolean;
+  request?: ImageModalRequest;
+  selectedIndex: number;
+  selectedImage?: ImageModalRequest["images"][number];
+} {
+  return {
+    open: Boolean(imageModalRequest.value),
+    request: imageModalRequest.value,
+    selectedIndex: imageModalIndex.value,
+    selectedImage: imageModalImage.value
+  };
+}
+
+function controlImageModal(input: { action: string; index?: number }): {
+  open: boolean;
+  selectedIndex: number;
+  selectedImage?: ImageModalRequest["images"][number];
+  error?: string;
+} {
+  const request = imageModalRequest.value;
+  if (!request) {
+    return { open: false, selectedIndex: 0, error: "No image modal is open." };
+  }
+
+  const action = input.action.toLowerCase();
+  if (action === "close") {
+    closeImageModal();
+    return { open: false, selectedIndex: 0 };
+  }
+  if (action === "next") {
+    selectImageModalIndex(imageModalIndex.value + 1);
+  } else if (action === "previous") {
+    selectImageModalIndex(imageModalIndex.value - 1);
+  } else if (action === "select") {
+    selectImageModalIndex(Number(input.index ?? imageModalIndex.value));
+  } else {
+    return {
+      open: true,
+      selectedIndex: imageModalIndex.value,
+      selectedImage: imageModalImage.value,
+      error: `Unknown image modal action ${input.action}`
+    };
+  }
+
+  return {
+    open: true,
+    selectedIndex: imageModalIndex.value,
+    selectedImage: imageModalImage.value
+  };
+}
+
 function writeTerminal(data: string): void {
   if (!terminal) {
     return;
@@ -1030,11 +1248,19 @@ function loadTouchOverlayEnabled(): boolean {
   return window.localStorage.getItem("voice-codex-touch-overlay") === "true";
 }
 
+function loadSpokenSummariesEnabled(): boolean {
+  return window.localStorage.getItem("voice-codex-spoken-summaries") === "true";
+}
+
 function saveTouchOverlayEnabled(): void {
   window.localStorage.setItem("voice-codex-touch-overlay", String(touchOverlayEnabled.value));
   if (!touchOverlayEnabled.value) {
     releaseOverlayPtt();
   }
+}
+
+function saveSpokenSummariesEnabled(): void {
+  window.localStorage.setItem("voice-codex-spoken-summaries", String(spokenSummariesEnabled.value));
 }
 
 function handleOverlayPttDown(kind: "agent" | "whisper", event: PointerEvent): void {
@@ -1263,6 +1489,16 @@ function releaseOverlayPtt(): void {
           </div>
         </article>
       </div>
+
+      <div v-if="recentSummaries.length > 0" class="summary-overlay" aria-live="polite">
+        <article v-for="summary in recentSummaries" :key="summary.id" class="turn-summary">
+          <div class="summary-meta">
+            <strong>{{ summary.threadName }}</strong>
+            <span>{{ summary.status || "Turn summary" }}</span>
+          </div>
+          <p>{{ summary.summary }}</p>
+        </article>
+      </div>
     </section>
 
     <div v-if="folderPickerOpen" class="modal-layer" role="dialog" aria-modal="true">
@@ -1315,6 +1551,54 @@ function releaseOverlayPtt(): void {
       </section>
     </div>
 
+    <div v-if="imageModalRequest" class="modal-layer image-modal-layer" role="dialog" aria-modal="true">
+      <section class="app-modal image-modal">
+        <header class="modal-header-row">
+          <div>
+            <h2 class="modal-title">{{ imageModalRequest.title || imageModalImage?.name || "Images" }}</h2>
+            <p class="modal-subtitle">{{ imageModalRequest.threadName }}</p>
+          </div>
+          <button class="icon-button" type="button" aria-label="Close images" @click="closeImageModal">
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+          </button>
+        </header>
+
+        <div class="image-stage">
+          <img
+            v-if="imageModalImage"
+            :src="imageModalImage.url"
+            :alt="imageModalImage.name"
+          />
+        </div>
+
+        <div class="image-modal-footer">
+          <button
+            class="btn btn-outline-light btn-sm"
+            type="button"
+            :disabled="imageModalIndex <= 0"
+            @click="selectImageModalIndex(imageModalIndex - 1)"
+          >
+            <i class="bi bi-chevron-left" aria-hidden="true"></i>
+            Previous
+          </button>
+          <span>{{ imageModalIndex + 1 }} / {{ imageModalRequest.images.length }}</span>
+          <button
+            class="btn btn-outline-light btn-sm"
+            type="button"
+            :disabled="imageModalIndex >= imageModalRequest.images.length - 1"
+            @click="selectImageModalIndex(imageModalIndex + 1)"
+          >
+            Next
+            <i class="bi bi-chevron-right" aria-hidden="true"></i>
+          </button>
+        </div>
+
+        <p v-if="imageModalRequest.caption" class="image-caption">
+          {{ imageModalRequest.caption }}
+        </p>
+      </section>
+    </div>
+
     <div v-if="settingsOpen" class="modal-layer" role="dialog" aria-modal="true">
       <section class="app-modal settings-modal">
         <header class="modal-header-row">
@@ -1359,6 +1643,15 @@ function releaseOverlayPtt(): void {
               class="form-check-input"
               type="checkbox"
               @change="onAlwaysListeningChange"
+            />
+          </label>
+          <label class="touch-toggle">
+            <span>AI-generated spoken summaries</span>
+            <input
+              v-model="spokenSummariesEnabled"
+              class="form-check-input"
+              type="checkbox"
+              @change="saveSpokenSummariesEnabled"
             />
           </label>
           <button class="btn btn-outline-light w-100" type="button" @click="toggleFullscreen">

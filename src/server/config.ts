@@ -14,8 +14,12 @@ export interface AppConfig {
   realtimeModel: string;
   realtimeVoice: string;
   transcriptionModel: string;
+  ttsModel: string;
+  ttsVoice: string;
   scrollbackLimit: number;
   workspaceRoot: string;
+  mcpHost: string;
+  mcpPort: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -37,8 +41,12 @@ export function loadConfig(): AppConfig {
     realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime",
     realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "marin",
     transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe",
+    ttsModel: process.env.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts",
+    ttsVoice: process.env.OPENAI_TTS_VOICE ?? "marin",
     scrollbackLimit: Number(process.env.VOICE_CODEX_SCROLLBACK_LIMIT ?? "200000"),
-    workspaceRoot
+    workspaceRoot,
+    mcpHost: process.env.VOICE_CODEX_MCP_HOST ?? "127.0.0.1",
+    mcpPort: Number(process.env.VOICE_CODEX_MCP_PORT ?? "0")
   };
 }
 

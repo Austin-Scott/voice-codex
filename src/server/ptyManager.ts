@@ -15,9 +15,12 @@ import { TerminalScreen } from "./terminalScreen.js";
 const FRAME_INTERVAL_MS = 75;
 const TEXT_CHUNK_DELAY_MS = 25;
 const SPECIAL_KEY_DELAY_MS = 150;
+const VOICE_CODEX_MCP_SERVER_ID = "voice_codex";
+const VOICE_CODEX_MCP_TOOL_TIMEOUT_SEC = 15;
 
 interface ManagedThread {
   id: string;
+  mcpToken: string;
   name: string;
   cwd: string;
   state: ThreadState;
@@ -31,12 +34,27 @@ interface ManagedThread {
   updatedAt: Date;
 }
 
+export interface McpThreadContext {
+  id: string;
+  name: string;
+  cwd: string;
+}
+
+interface McpEndpoint {
+  urlForThread: (threadId: string, token: string) => string;
+}
+
 export class PtyThreadManager extends EventEmitter {
   private threads = new Map<string, ManagedThread>();
   private activeThreadId: string | undefined;
+  private mcpEndpoint: McpEndpoint | undefined;
 
   constructor(private readonly config: AppConfig) {
     super();
+  }
+
+  setMcpEndpoint(endpoint: McpEndpoint): void {
+    this.mcpEndpoint = endpoint;
   }
 
   list(): CodexThreadSummary[] {
@@ -50,6 +68,19 @@ export class PtyThreadManager extends EventEmitter {
   getSummary(id: string): CodexThreadSummary | undefined {
     const thread = this.threads.get(id);
     return thread ? this.toSummary(thread) : undefined;
+  }
+
+  getMcpThreadContext(id: string, token: string): McpThreadContext | undefined {
+    const thread = this.threads.get(id);
+    if (!thread || thread.mcpToken !== token) {
+      return undefined;
+    }
+
+    return {
+      id: thread.id,
+      name: thread.name,
+      cwd: thread.cwd
+    };
   }
 
   async getSnapshot(id: string): Promise<TerminalFramePayload | undefined> {
@@ -75,6 +106,7 @@ export class PtyThreadManager extends EventEmitter {
     const now = new Date();
     const thread: ManagedThread = {
       id,
+      mcpToken: randomUUID(),
       name: input.name?.trim() || `Codex ${this.threads.size + 1}`,
       cwd: input.cwd,
       state: "starting",
@@ -89,7 +121,7 @@ export class PtyThreadManager extends EventEmitter {
     this.emit("thread", this.toSummary(thread));
 
     try {
-      const command = resolveShellCommand(this.config.codexBin, this.config.codexArgs);
+      const command = resolveShellCommand(this.config.codexBin, this.buildCodexArgs(thread));
       const proc = pty.spawn(command.file, command.args, {
         name: "xterm-256color",
         cols: 100,
@@ -276,9 +308,46 @@ export class PtyThreadManager extends EventEmitter {
     }
     return selected?.id;
   }
+
+  private buildCodexArgs(thread: ManagedThread): string[] {
+    if (!this.mcpEndpoint) {
+      return this.config.codexArgs;
+    }
+
+    return withVoiceCodexMcpArgs(
+      this.config.codexArgs,
+      this.mcpEndpoint.urlForThread(thread.id, thread.mcpToken)
+    );
+  }
 }
 
-function resolveShellCommand(command: string, args: string[]): { file: string; args: string[] } {
+export function withVoiceCodexMcpArgs(baseArgs: string[], url: string): string[] {
+  return [
+    ...baseArgs,
+    "-c",
+    "experimental_use_rmcp_client=true",
+    "-c",
+    "rmcp_client=true",
+    "-c",
+    [
+      `mcp_servers.${VOICE_CODEX_MCP_SERVER_ID}=`,
+      `{url=${toTomlLiteralString(url)}`,
+      ",enabled=true",
+      `,tool_timeout_sec=${VOICE_CODEX_MCP_TOOL_TIMEOUT_SEC}`,
+      "}"
+    ].join("")
+  ];
+}
+
+function toTomlLiteralString(value: string): string {
+  if (value.includes("'") || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error("Voice Codex MCP URL contains characters that cannot be TOML literal strings.");
+  }
+
+  return `'${value}'`;
+}
+
+export function resolveShellCommand(command: string, args: string[]): { file: string; args: string[] } {
   const shellCommand = [command, ...args.map(quoteShellPart)].join(" ");
   if (process.platform === "win32") {
     return { file: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/c", shellCommand] };
@@ -289,7 +358,7 @@ function resolveShellCommand(command: string, args: string[]): { file: string; a
 
 function quoteShellPart(value: string): string {
   if (process.platform === "win32") {
-    if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) {
+    if (/^[A-Za-z0-9_./:=+{},?'[\]-]+$/.test(value)) {
       return value;
     }
 

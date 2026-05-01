@@ -341,6 +341,62 @@ input {
   gap: 8px;
 }
 
+.summary-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: min(440px, calc(100% - 16px));
+  max-height: min(36vh, 280px);
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.turn-summary {
+  display: grid;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(13, 17, 23, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.summary-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.summary-meta strong,
+.summary-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-meta strong {
+  font-size: 0.82rem;
+}
+
+.summary-meta span {
+  color: #9fb0ba;
+  font-size: 0.72rem;
+}
+
+.turn-summary p {
+  margin: 0;
+  color: #d7e2e8;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .modal-layer {
   position: fixed;
   inset: 0;
@@ -373,6 +429,51 @@ input {
 .settings-modal {
   align-self: center;
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.image-modal {
+  width: min(100%, 1080px);
+  max-height: min(92vh, 900px);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+.image-stage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #0d1117;
+}
+
+.image-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.image-modal-footer {
+  display: grid;
+  grid-template-columns: auto minmax(64px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-modal-footer span {
+  justify-self: center;
+  color: #9fb0ba;
+  font-size: 0.82rem;
+}
+
+.image-caption {
+  max-height: 96px;
+  margin: 0;
+  overflow: auto;
+  color: #c9d7df;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .modal-scroll-body {

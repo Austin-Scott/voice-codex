@@ -10,12 +10,15 @@ import { createServer as createViteServer } from "vite";
 import type { ClientEvent, ServerEvent } from "../shared/protocol.js";
 import { certificatePaths, ensureCertificate } from "./certs.js";
 import { loadConfig } from "./config.js";
+import { ControllerImageManager } from "./controllerImages.js";
 import { assertExistingDirectory, createDirectory, listDirectories } from "./fsBrowser.js";
 import { normalizeProposalKeystrokes } from "./keystrokes.js";
-import { createRealtimeAnswer, transcribeAudio } from "./openai.js";
+import { VoiceCodexMcpBridge } from "./mcpBridge.js";
+import { createRealtimeAnswer, synthesizeSpeech, transcribeAudio } from "./openai.js";
 import { PairingManager, SESSION_COOKIE } from "./pairing.js";
 import { ProposalManager } from "./proposals.js";
 import { PtyThreadManager } from "./ptyManager.js";
+import { TurnSummaryManager } from "./summaries.js";
 
 interface HeartbeatWebSocket extends WebSocket {
   isAlive?: boolean;
@@ -28,6 +31,13 @@ const app = express();
 const pairing = new PairingManager();
 const threads = new PtyThreadManager(config);
 const proposals = new ProposalManager(threads);
+const summaries = new TurnSummaryManager();
+const controllerImages = new ControllerImageManager(config);
+const mcpBridge = new VoiceCodexMcpBridge(config, threads, summaries, controllerImages);
+await mcpBridge.listen();
+threads.setMcpEndpoint({
+  urlForThread: (threadId, token) => mcpBridge.urlForThread(threadId, token)
+});
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }
@@ -96,8 +106,28 @@ app.post(
   })
 );
 
+app.post(
+  "/api/tts",
+  requireController,
+  asyncHandler(async (req, res) => {
+    const text = String(req.body?.text ?? "").trim();
+    if (!text) {
+      res.status(400).json({ error: "Text is required" });
+      return;
+    }
+
+    const audio = await synthesizeSpeech(config, text);
+    res.type("audio/mpeg").send(audio);
+  })
+);
+
 app.get("/api/threads", requireController, (_req, res) => {
   res.json({ threads: threads.list(), activeThreadId: threads.getActiveThreadId() });
+});
+
+app.get("/api/summaries", requireController, (req, res) => {
+  const threadId = typeof req.query.threadId === "string" ? req.query.threadId : undefined;
+  res.json({ summaries: summaries.list(threadId) });
 });
 
 app.post("/api/threads", requireController, (req, res) => {
@@ -243,6 +273,21 @@ app.patch("/api/proposals/:id", requireController, (req, res) => {
   }
 });
 
+app.get("/api/mcp-images/:id", requireController, (req, res) => {
+  const image = controllerImages.getImage(String(req.params.id));
+  if (!image) {
+    res.status(404).json({ error: "Image not found" });
+    return;
+  }
+
+  res.type(image.mimeType);
+  res.sendFile(image.filePath, (error) => {
+    if (error && !res.headersSent) {
+      res.status(404).json({ error: "Image not found" });
+    }
+  });
+});
+
 if (process.env.NODE_ENV === "production") {
   const clientDir = path.join(config.rootDir, "dist-client");
   app.use(express.static(clientDir));
@@ -303,6 +348,7 @@ wss.on("connection", (socket) => {
     activeThreadId: threads.getActiveThreadId()
   });
   send(ws, { type: "proposals", proposals: proposals.listPending() });
+  send(ws, { type: "turn_summaries", summaries: summaries.list() });
 
   ws.on("message", (raw) => {
     handleClientEvent(ws, raw.toString()).catch((error: unknown) => {
@@ -352,6 +398,7 @@ threads.on("threads", () => {
 
 threads.on("thread.closed", (threadId) => {
   proposals.rejectForThread(String(threadId), "Not sent: target thread was closed.");
+  void mcpBridge.closeSessionsForThread(String(threadId));
 });
 
 proposals.on("created", (proposal) => {
@@ -366,10 +413,19 @@ proposals.on("updated", (proposal) => {
   broadcast({ type: "proposal.updated", proposal });
 });
 
+summaries.on("created", (summary) => {
+  broadcast({ type: "turn_summary.created", summary });
+});
+
+controllerImages.on("open", (request) => {
+  broadcast({ type: "image_modal.open", request });
+});
+
 server.listen(config.port, config.host, () => {
   const qrDisplayUrl = getQrDisplayUrl(config.port);
   const localControllerUrl = getLocalControllerUrl(config.port);
   console.log(`Voice Codex listening on HTTPS port ${config.port}`);
+  console.log(`Voice Codex MCP bridge listening at ${mcpBridge.displayUrl()}`);
   console.log(`Certificate files: ${certificatePaths(config)}${certs.generated ? " (generated)" : ""}`);
   console.log(`Show QR for remote controller: ${qrDisplayUrl}`);
   console.log(`Pair local browser immediately: ${localControllerUrl}`);

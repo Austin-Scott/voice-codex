@@ -65,6 +65,35 @@ export interface KeystrokeProposal {
   resolvedAt?: string;
 }
 
+export interface TurnSummary {
+  id: string;
+  threadId: string;
+  threadName: string;
+  summary: string;
+  status?: string;
+  createdAt: string;
+}
+
+export interface ControllerImage {
+  id: string;
+  threadId: string;
+  threadName: string;
+  name: string;
+  path: string;
+  mimeType: string;
+  url: string;
+}
+
+export interface ImageModalRequest {
+  id: string;
+  threadId: string;
+  threadName: string;
+  title?: string;
+  caption?: string;
+  images: ControllerImage[];
+  createdAt: string;
+}
+
 export interface TerminalFramePayload {
   threadId: string;
   sequence: number;
@@ -119,6 +148,21 @@ export interface ProposalsEvent {
   proposals: KeystrokeProposal[];
 }
 
+export interface TurnSummaryCreatedEvent {
+  type: "turn_summary.created";
+  summary: TurnSummary;
+}
+
+export interface TurnSummariesEvent {
+  type: "turn_summaries";
+  summaries: TurnSummary[];
+}
+
+export interface ImageModalOpenEvent {
+  type: "image_modal.open";
+  request: ImageModalRequest;
+}
+
 export interface ErrorEvent {
   type: "error";
   message: string;
@@ -134,6 +178,9 @@ export type ServerEvent =
   | ProposalResolvedEvent
   | ProposalUpdatedEvent
   | ProposalsEvent
+  | TurnSummaryCreatedEvent
+  | TurnSummariesEvent
+  | ImageModalOpenEvent
   | ErrorEvent;
 
 export type ClientEvent =

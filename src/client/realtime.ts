@@ -1,4 +1,10 @@
-import type { CodexThreadSummary, DirectoryListing, KeystrokeProposal } from "@shared/protocol";
+import type {
+  CodexThreadSummary,
+  DirectoryListing,
+  ImageModalRequest,
+  KeystrokeProposal,
+  TurnSummary
+} from "@shared/protocol";
 import {
   browseDirectories,
   closeThread,
@@ -69,6 +75,20 @@ export interface RealtimeToolsState {
   showDirectoryListing: (listing: DirectoryListing) => void;
   showFolderPicker: () => void;
   hideFolderPicker: () => void;
+  getTurnSummaries: (threadId?: string) => TurnSummary[];
+  getLatestTurnSummary: (threadId?: string) => TurnSummary | undefined;
+  getImageModalState: () => {
+    open: boolean;
+    request?: ImageModalRequest;
+    selectedIndex: number;
+    selectedImage?: ImageModalRequest["images"][number];
+  };
+  controlImageModal: (input: { action: string; index?: number }) => {
+    open: boolean;
+    selectedIndex: number;
+    selectedImage?: ImageModalRequest["images"][number];
+    error?: string;
+  };
 }
 
 export class RealtimeVoiceAgent {
@@ -249,6 +269,32 @@ export class RealtimeVoiceAgent {
 
     if (name === "list_pending_proposals") {
       return { proposals: this.toolsState.getPendingProposals() };
+    }
+
+    if (name === "list_turn_summaries") {
+      const threadId = typeof args.threadId === "string" && args.threadId.trim()
+        ? args.threadId.trim()
+        : undefined;
+      const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, args.limit)) : 10;
+      return { summaries: this.toolsState.getTurnSummaries(threadId).slice(0, limit) };
+    }
+
+    if (name === "get_latest_turn_summary") {
+      const requestedThreadId =
+        typeof args.threadId === "string" && args.threadId.trim() ? args.threadId.trim() : undefined;
+      const threadId = requestedThreadId ?? this.toolsState.getThreads().activeThreadId;
+      return { summary: this.toolsState.getLatestTurnSummary(threadId) };
+    }
+
+    if (name === "get_image_modal_state") {
+      return this.toolsState.getImageModalState();
+    }
+
+    if (name === "control_image_modal") {
+      return this.toolsState.controlImageModal({
+        action: String(args.action ?? ""),
+        index: typeof args.index === "number" ? args.index : undefined
+      });
     }
 
     if (name === "read_terminal") {

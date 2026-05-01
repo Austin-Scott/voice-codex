@@ -29,7 +29,7 @@ export async function createRealtimeAnswer(config: AppConfig, offerSdp: string):
 
   const responseText = await response.text();
   if (!response.ok) {
-    throw new Error(summarizeOpenAiError(response.status, responseText));
+    throw new Error(summarizeOpenAiError(response.status, responseText, "Realtime session failed"));
   }
 
   return responseText;
@@ -63,6 +63,35 @@ export async function transcribeAudio(
   return data.text ?? "";
 }
 
+export async function synthesizeSpeech(config: AppConfig, input: string): Promise<Buffer> {
+  const text = input.trim();
+  if (!text) {
+    throw new Error("Text is required for speech synthesis");
+  }
+
+  const apiKey = await readOpenAiApiKey(config);
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: config.ttsModel,
+      voice: config.ttsVoice,
+      input: text.slice(0, 4000),
+      instructions: "Speak clearly and concisely. This is an AI-generated Codex turn summary."
+    })
+  });
+
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!response.ok) {
+    throw new Error(summarizeOpenAiError(response.status, bytes.toString("utf8"), "Speech synthesis failed"));
+  }
+
+  return bytes;
+}
+
 function createRealtimeSessionConfig(config: AppConfig): object {
   return {
     type: "realtime",
@@ -90,6 +119,8 @@ function createRealtimeSessionConfig(config: AppConfig): object {
       "After drafting, briefly say what is waiting on screen and ask the user to approve or reject it.",
       "If the user asks to change pending keystrokes, call update_keystroke_proposal instead of creating a second proposal.",
       "If the user asks about pending approvals, or before you say no pending approvals exist, call list_pending_proposals.",
+      "If the user asks what Codex just did, call get_latest_turn_summary or list_turn_summaries before answering.",
+      "If an image modal is open and the user asks to change or close it, call get_image_modal_state or control_image_modal.",
       "If the user verbally approves or rejects a visible proposal, call list_pending_proposals if you need the proposal id, then call resolve_keystroke_proposal.",
       "Use literal text tokens for normal typing. Use named tokens for special keys: <ENTER>, <ESC>, <TAB>, <SPACE>, <SHIFT_TAB>, <BACKSPACE>, <CTRL_A> through <CTRL_Z>, <UP>, <DOWN>, <LEFT>, <RIGHT>.",
       "When a proposal includes a special key, include that named token in both keystrokes and displayText, for example npm test<ENTER>.",
@@ -115,6 +146,75 @@ function createRealtimeSessionConfig(config: AppConfig): object {
         parameters: {
           type: "object",
           properties: {},
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "list_turn_summaries",
+        description:
+          "List recent summaries reported by Codex CLI threads through the controller MCP server.",
+        parameters: {
+          type: "object",
+          properties: {
+            threadId: {
+              type: "string",
+              description: "Optional thread id to filter summaries."
+            },
+            limit: {
+              type: "number",
+              description: "Maximum summaries to return, up to 20.",
+              default: 10
+            }
+          },
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "get_latest_turn_summary",
+        description:
+          "Get the latest Codex turn summary for the active thread, or for a requested thread id.",
+        parameters: {
+          type: "object",
+          properties: {
+            threadId: {
+              type: "string",
+              description: "Optional thread id. If omitted, uses the active controller thread."
+            }
+          },
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "get_image_modal_state",
+        description:
+          "Inspect whether the controller image modal is open and which image is currently selected.",
+        parameters: {
+          type: "object",
+          properties: {},
+          additionalProperties: false
+        }
+      },
+      {
+        type: "function",
+        name: "control_image_modal",
+        description:
+          "Navigate or close the controller image modal. Use select with a zero-based index when choosing a specific image.",
+        parameters: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["next", "previous", "select", "close"]
+            },
+            index: {
+              type: "number",
+              description: "Zero-based image index for the select action."
+            }
+          },
+          required: ["action"],
           additionalProperties: false
         }
       },
@@ -339,12 +439,12 @@ function createRealtimeSessionConfig(config: AppConfig): object {
   };
 }
 
-function summarizeOpenAiError(status: number, body: string): string {
+function summarizeOpenAiError(status: number, body: string, label: string): string {
   try {
     const data = JSON.parse(body) as { error?: { message?: string }; message?: string };
     const message = data.error?.message ?? data.message;
     if (message) {
-      return `Realtime session failed with HTTP ${status}: ${message}`;
+      return `${label} with HTTP ${status}: ${message}`;
     }
   } catch {
     // Fall through to compact text handling.
@@ -357,5 +457,5 @@ function summarizeOpenAiError(status: number, body: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 280);
-  return `Realtime session failed with HTTP ${status}${compact ? `: ${compact}` : ""}`;
+  return `${label} with HTTP ${status}${compact ? `: ${compact}` : ""}`;
 }

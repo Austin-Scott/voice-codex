@@ -3,7 +3,8 @@ import type {
   DirectoryListing,
   KeystrokeProposal,
   SessionResponse,
-  TerminalSnapshotEvent
+  TerminalSnapshotEvent,
+  TurnSummary
 } from "@shared/protocol";
 
 export async function getSession(pairHost?: string): Promise<SessionResponse> {
@@ -144,6 +145,35 @@ export async function transcribe(audio: Blob): Promise<{ text: string }> {
     method: "POST",
     body: form
   });
+}
+
+export async function synthesizeSpeech(text: string): Promise<Blob> {
+  const response = await fetch("/api/tts", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text })
+  });
+
+  if (!response.ok) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const body = (await response.json()) as { error?: string };
+      throw new Error(body.error ?? `TTS failed with HTTP ${response.status}`);
+    }
+    throw new Error(await response.text());
+  }
+
+  return response.blob();
+}
+
+export async function listTurnSummaries(threadId?: string): Promise<{ summaries: TurnSummary[] }> {
+  const params = new URLSearchParams();
+  if (threadId) {
+    params.set("threadId", threadId);
+  }
+
+  return request(`/api/summaries${params.size ? `?${params}` : ""}`);
 }
 
 export async function createRealtimeAnswer(offerSdp: string): Promise<string> {
