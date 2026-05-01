@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { resolveShellCommand, withVoiceCodexMcpArgs } from "../src/server/ptyManager";
 
+const expectedMcpConfig =
+  "mcp_servers.voice_codex={url='http://127.0.0.1:1234/mcp/thread-1?token=secret',enabled=true,tool_timeout_sec=15,default_tools_approval_mode='approve'}";
+
 describe("withVoiceCodexMcpArgs", () => {
   it("appends voice-codex MCP config after existing args", () => {
     const args = withVoiceCodexMcpArgs(
@@ -16,7 +19,7 @@ describe("withVoiceCodexMcpArgs", () => {
       "-c",
       "rmcp_client=true",
       "-c",
-      "mcp_servers.voice_codex={url='http://127.0.0.1:1234/mcp/thread-1?token=secret',enabled=true,tool_timeout_sec=15}"
+      expectedMcpConfig
     ]);
   });
 
@@ -34,7 +37,7 @@ describe("withVoiceCodexMcpArgs", () => {
       "-c",
       "rmcp_client=true",
       "-c",
-      "mcp_servers.voice_codex={url='http://127.0.0.1:1234/mcp/thread-1?token=secret',enabled=true,tool_timeout_sec=15}"
+      expectedMcpConfig
     ]);
   });
 
@@ -50,11 +53,11 @@ describe("withVoiceCodexMcpArgs", () => {
       expect(command.args).toEqual([
         "/d",
         "/c",
-        "codex -c experimental_use_rmcp_client=true -c rmcp_client=true -c mcp_servers.voice_codex={url='http://127.0.0.1:1234/mcp/thread-1?token=secret',enabled=true,tool_timeout_sec=15}"
+        `codex -c experimental_use_rmcp_client=true -c rmcp_client=true -c ${expectedMcpConfig}`
       ]);
     } else {
       expect(command.args.join(" ")).toContain(
-        "mcp_servers.voice_codex={url='\"'\"'http://127.0.0.1:1234/mcp/thread-1?token=secret'\"'\"',enabled=true,tool_timeout_sec=15}"
+        "mcp_servers.voice_codex={url='\"'\"'http://127.0.0.1:1234/mcp/thread-1?token=secret'\"'\"',enabled=true,tool_timeout_sec=15,default_tools_approval_mode='\"'\"'approve'\"'\"'}"
       );
     }
   });

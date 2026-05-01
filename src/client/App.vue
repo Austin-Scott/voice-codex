@@ -41,6 +41,18 @@ interface MinimalWakeLockSentinel {
   addEventListener: (type: "release", listener: () => void, options?: AddEventListenerOptions) => void;
 }
 
+interface SummaryToast {
+  id: string;
+  summary: TurnSummary;
+  leaving: boolean;
+  dragging: boolean;
+  startX: number;
+  offsetX: number;
+  pointerId?: number;
+  dismissTimer?: ReturnType<typeof window.setTimeout>;
+  removalTimer?: ReturnType<typeof window.setTimeout>;
+}
+
 const session = ref<SessionResponse | undefined>();
 const errorMessage = ref("");
 const statusMessage = ref("Loading");
@@ -51,6 +63,7 @@ const threads = ref<CodexThreadSummary[]>([]);
 const activeThreadId = ref<string | undefined>();
 const proposals = ref<KeystrokeProposal[]>([]);
 const turnSummaries = ref<TurnSummary[]>([]);
+const summaryToasts = ref<SummaryToast[]>([]);
 const terminalElement = ref<HTMLDivElement | null>(null);
 const captureBinding = ref<keyof PedalBindings | undefined>();
 const qrHostInput = ref("");
@@ -90,7 +103,7 @@ const activeThread = computed(() => threads.value.find((thread) => thread.id ===
 const pendingProposals = computed(() =>
   proposals.value.filter((proposal) => proposal.status === "pending")
 );
-const recentSummaries = computed(() => turnSummaries.value.slice(0, 3));
+const activeSummaryToasts = computed(() => summaryToasts.value.slice(0, 3));
 const imageModalImage = computed(() => imageModalRequest.value?.images[imageModalIndex.value]);
 
 onMounted(async () => {
@@ -119,6 +132,7 @@ onBeforeUnmount(() => {
   releaseOverlayPtt();
   clearAgentIdleTimer();
   clearControllerSessionCheckTimer();
+  clearSummaryToasts();
   voiceAgent?.disconnect();
   void releaseWakeLock();
   socket?.close();
@@ -374,7 +388,7 @@ function handleServerEvent(event: ServerEvent): void {
 
   if (event.type === "turn_summary.created") {
     upsertTurnSummary(event.summary);
-    enqueueSummarySpeech(event.summary);
+    showSummaryToast(event.summary);
     return;
   }
 
@@ -439,6 +453,7 @@ function resetControllerRuntime(): void {
   threads.value = [];
   proposals.value = [];
   turnSummaries.value = [];
+  clearSummaryToasts();
   folderPickerOpen.value = false;
   settingsOpen.value = false;
   imageModalRequest.value = undefined;
@@ -943,17 +958,157 @@ function upsertTurnSummary(summary: TurnSummary): void {
   }
 }
 
-function enqueueSummarySpeech(summary: TurnSummary): void {
-  if (!spokenSummariesEnabled.value) {
+function showSummaryToast(summary: TurnSummary): void {
+  const existing = summaryToasts.value.find((toast) => toast.id === summary.id);
+  if (existing) {
+    existing.summary = summary;
+    existing.leaving = false;
+    existing.offsetX = 0;
     return;
   }
 
-  summarySpeechQueue = summarySpeechQueue
+  const toast: SummaryToast = {
+    id: summary.id,
+    summary,
+    leaving: false,
+    dragging: false,
+    startX: 0,
+    offsetX: 0
+  };
+  summaryToasts.value.unshift(toast);
+
+  for (const staleToast of summaryToasts.value.slice(3)) {
+    dismissSummaryToast(staleToast.id);
+  }
+
+  if (spokenSummariesEnabled.value) {
+    void enqueueSummarySpeech(summary).then(() => dismissSummaryToast(summary.id));
+  } else {
+    scheduleSummaryToastDismissal(summary.id, 15_000);
+  }
+}
+
+function enqueueSummarySpeech(summary: TurnSummary): Promise<void> {
+  const playback = summarySpeechQueue
     .catch(() => undefined)
-    .then(() => playSummarySpeech(summary))
-    .catch((error: unknown) => {
-      errorMessage.value = error instanceof Error ? error.message : String(error);
-    });
+    .then(() => playSummarySpeech(summary));
+  summarySpeechQueue = playback.catch(() => undefined);
+
+  return playback.catch((error: unknown) => {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+    return new Promise<void>((resolve) => window.setTimeout(resolve, 15_000));
+  });
+}
+
+function scheduleSummaryToastDismissal(summaryId: string, delayMs: number): void {
+  const toast = summaryToasts.value.find((candidate) => candidate.id === summaryId);
+  if (!toast) {
+    return;
+  }
+
+  clearSummaryToastTimers(toast, "dismiss");
+  toast.dismissTimer = window.setTimeout(() => {
+    toast.dismissTimer = undefined;
+    dismissSummaryToast(summaryId);
+  }, delayMs);
+}
+
+function dismissSummaryToast(summaryId: string, direction = 1): void {
+  const toast = summaryToasts.value.find((candidate) => candidate.id === summaryId);
+  if (!toast || toast.leaving) {
+    return;
+  }
+
+  clearSummaryToastTimers(toast, "all");
+  toast.dragging = false;
+  toast.leaving = true;
+  toast.offsetX = direction * Math.max(window.innerWidth, 480);
+  toast.removalTimer = window.setTimeout(() => {
+    removeSummaryToast(summaryId);
+  }, 240);
+}
+
+function removeSummaryToast(summaryId: string): void {
+  const index = summaryToasts.value.findIndex((toast) => toast.id === summaryId);
+  if (index < 0) {
+    return;
+  }
+
+  clearSummaryToastTimers(summaryToasts.value[index], "all");
+  summaryToasts.value.splice(index, 1);
+}
+
+function clearSummaryToastTimers(toast: SummaryToast, mode: "dismiss" | "all"): void {
+  if (toast.dismissTimer) {
+    window.clearTimeout(toast.dismissTimer);
+    toast.dismissTimer = undefined;
+  }
+  if (mode === "all" && toast.removalTimer) {
+    window.clearTimeout(toast.removalTimer);
+    toast.removalTimer = undefined;
+  }
+}
+
+function clearSummaryToasts(): void {
+  for (const toast of summaryToasts.value) {
+    clearSummaryToastTimers(toast, "all");
+  }
+  summaryToasts.value = [];
+}
+
+function startSummaryToastSwipe(toast: SummaryToast, event: PointerEvent): void {
+  if (toast.leaving || (event.pointerType === "mouse" && event.button !== 0)) {
+    return;
+  }
+
+  toast.dragging = true;
+  toast.pointerId = event.pointerId;
+  toast.startX = event.clientX - toast.offsetX;
+  if (event.currentTarget instanceof HTMLElement) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+}
+
+function updateSummaryToastSwipe(toast: SummaryToast, event: PointerEvent): void {
+  if (!toast.dragging || toast.pointerId !== event.pointerId) {
+    return;
+  }
+
+  toast.offsetX = event.clientX - toast.startX;
+}
+
+function finishSummaryToastSwipe(toast: SummaryToast, event: PointerEvent): void {
+  if (!toast.dragging || toast.pointerId !== event.pointerId) {
+    return;
+  }
+
+  if (event.currentTarget instanceof HTMLElement && event.currentTarget.hasPointerCapture(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  const width = event.currentTarget instanceof HTMLElement ? event.currentTarget.offsetWidth : 360;
+  const shouldDismiss = Math.abs(toast.offsetX) > Math.min(160, width * 0.36);
+  const direction = toast.offsetX < 0 ? -1 : 1;
+  toast.dragging = false;
+  toast.pointerId = undefined;
+
+  if (shouldDismiss) {
+    dismissSummaryToast(toast.id, direction);
+  } else {
+    toast.offsetX = 0;
+  }
+}
+
+function summaryToastStyle(toast: SummaryToast): Record<string, string> {
+  const distance = Math.abs(toast.offsetX);
+  const style: Record<string, string> = {};
+  if (toast.offsetX !== 0) {
+    style.transform = `translateX(${toast.offsetX}px)`;
+  }
+  if (toast.dragging) {
+    style.opacity = String(Math.max(0.26, 0.86 - Math.min(distance / 420, 0.58)));
+  }
+  return style;
 }
 
 async function playSummarySpeech(summary: TurnSummary): Promise<void> {
@@ -1490,13 +1645,23 @@ function releaseOverlayPtt(): void {
         </article>
       </div>
 
-      <div v-if="recentSummaries.length > 0" class="summary-overlay" aria-live="polite">
-        <article v-for="summary in recentSummaries" :key="summary.id" class="turn-summary">
+      <div v-if="activeSummaryToasts.length > 0" class="summary-overlay" aria-live="polite">
+        <article
+          v-for="toast in activeSummaryToasts"
+          :key="toast.id"
+          class="turn-summary"
+          :class="{ dragging: toast.dragging, leaving: toast.leaving }"
+          :style="summaryToastStyle(toast)"
+          @pointerdown="startSummaryToastSwipe(toast, $event)"
+          @pointermove="updateSummaryToastSwipe(toast, $event)"
+          @pointerup="finishSummaryToastSwipe(toast, $event)"
+          @pointercancel="finishSummaryToastSwipe(toast, $event)"
+        >
           <div class="summary-meta">
-            <strong>{{ summary.threadName }}</strong>
-            <span>{{ summary.status || "Turn summary" }}</span>
+            <strong>{{ toast.summary.threadName }}</strong>
+            <span>{{ toast.summary.status || "Turn summary" }}</span>
           </div>
-          <p>{{ summary.summary }}</p>
+          <p>{{ toast.summary.summary }}</p>
         </article>
       </div>
     </section>

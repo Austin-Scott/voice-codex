@@ -349,7 +349,7 @@ input {
   max-height: min(36vh, 280px);
   display: grid;
   gap: 8px;
-  overflow: auto;
+  overflow: visible;
   z-index: 5;
   pointer-events: none;
 }
@@ -360,8 +360,27 @@ input {
   padding: 9px 10px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
-  background: rgba(13, 17, 23, 0.78);
+  background: rgba(13, 17, 23, 0.62);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.3);
   backdrop-filter: blur(8px);
+  cursor: grab;
+  opacity: 0.86;
+  pointer-events: auto;
+  touch-action: pan-y;
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
+  user-select: none;
+  will-change: opacity, transform;
+}
+
+.turn-summary.dragging {
+  cursor: grabbing;
+  transition: none;
+}
+
+.turn-summary.leaving {
+  opacity: 0;
 }
 
 .summary-meta {
@@ -409,6 +428,7 @@ input {
 }
 
 .app-modal {
+  box-sizing: border-box;
   width: min(100%, 680px);
   max-height: min(86vh, 760px);
   justify-self: center;
@@ -432,14 +452,24 @@ input {
 }
 
 .image-modal {
-  width: min(100%, 1080px);
-  max-height: min(92vh, 900px);
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  width: min(calc(100vw - 24px), 1080px);
+  height: min(92vh, 900px);
+  height: min(92dvh, 900px);
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .image-stage {
+  flex: 1 1 auto;
+  align-self: stretch;
+  justify-self: stretch;
   min-width: 0;
   min-height: 0;
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -448,8 +478,11 @@ input {
 }
 
 .image-stage img {
-  max-width: 100%;
-  max-height: 100%;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
 }
 

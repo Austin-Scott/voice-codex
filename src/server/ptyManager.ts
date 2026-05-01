@@ -17,6 +17,7 @@ const TEXT_CHUNK_DELAY_MS = 25;
 const SPECIAL_KEY_DELAY_MS = 150;
 const VOICE_CODEX_MCP_SERVER_ID = "voice_codex";
 const VOICE_CODEX_MCP_TOOL_TIMEOUT_SEC = 15;
+const VOICE_CODEX_MCP_TOOL_APPROVAL_MODE = "approve";
 
 interface ManagedThread {
   id: string;
@@ -334,6 +335,7 @@ export function withVoiceCodexMcpArgs(baseArgs: string[], url: string): string[]
       `{url=${toTomlLiteralString(url)}`,
       ",enabled=true",
       `,tool_timeout_sec=${VOICE_CODEX_MCP_TOOL_TIMEOUT_SEC}`,
+      `,default_tools_approval_mode='${VOICE_CODEX_MCP_TOOL_APPROVAL_MODE}'`,
       "}"
     ].join("")
   ];
