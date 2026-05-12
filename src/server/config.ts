@@ -38,7 +38,7 @@ export function loadConfig(): AppConfig {
     certDir,
     certPath: process.env.VOICE_CODEX_CERT_PATH ?? path.join(certDir, "cert.pem"),
     keyPath: process.env.VOICE_CODEX_KEY_PATH ?? path.join(certDir, "key.pem"),
-    realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime",
+    realtimeModel: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2",
     realtimeVoice: process.env.OPENAI_REALTIME_VOICE ?? "marin",
     transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-transcribe",
     ttsModel: process.env.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts",

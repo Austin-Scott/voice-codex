@@ -129,7 +129,7 @@ function createConfig(): AppConfig {
     certDir: "",
     certPath: "",
     keyPath: "",
-    realtimeModel: "gpt-realtime",
+    realtimeModel: "gpt-realtime-2",
     realtimeVoice: "marin",
     transcriptionModel: "gpt-4o-transcribe",
     ttsModel: "gpt-4o-mini-tts",
