@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import type {
   CodexThreadSummary,
   DirectoryListing,
@@ -96,6 +96,7 @@ let wakeLock: MinimalWakeLockSentinel | undefined;
 let pageWasHidden = document.visibilityState === "hidden";
 let summarySpeechQueue = Promise.resolve();
 let controllerSessionCheckTimer: ReturnType<typeof window.setTimeout> | undefined;
+let errorDismissTimer: ReturnType<typeof window.setTimeout> | undefined;
 const lastFrameSequences = new Map<string, number>();
 
 const isController = computed(() => Boolean(session.value?.isController));
@@ -105,6 +106,20 @@ const pendingProposals = computed(() =>
 );
 const activeSummaryToasts = computed(() => summaryToasts.value.slice(0, 3));
 const imageModalImage = computed(() => imageModalRequest.value?.images[imageModalIndex.value]);
+
+watch(errorMessage, (message) => {
+  clearErrorDismissTimer();
+  if (!shouldAutoDismissError(message)) {
+    return;
+  }
+
+  errorDismissTimer = window.setTimeout(() => {
+    if (errorMessage.value === message) {
+      errorMessage.value = "";
+    }
+    errorDismissTimer = undefined;
+  }, 5_000);
+});
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKeyDown, true);
@@ -132,6 +147,7 @@ onBeforeUnmount(() => {
   releaseOverlayPtt();
   clearAgentIdleTimer();
   clearControllerSessionCheckTimer();
+  clearErrorDismissTimer();
   clearSummaryToasts();
   voiceAgent?.disconnect();
   void releaseWakeLock();
@@ -466,6 +482,22 @@ function clearControllerSessionCheckTimer(): void {
     window.clearTimeout(controllerSessionCheckTimer);
     controllerSessionCheckTimer = undefined;
   }
+}
+
+function clearErrorDismissTimer(): void {
+  if (errorDismissTimer) {
+    window.clearTimeout(errorDismissTimer);
+    errorDismissTimer = undefined;
+  }
+}
+
+function dismissErrorMessage(): void {
+  clearErrorDismissTimer();
+  errorMessage.value = "";
+}
+
+function shouldAutoDismissError(message: string): boolean {
+  return message.includes("WebRTC connection");
 }
 
 async function createNewThread(): Promise<void> {
@@ -1724,16 +1756,6 @@ function releaseOverlayPtt(): void {
 
     <div v-if="imageModalRequest" class="modal-layer image-modal-layer" role="dialog" aria-modal="true">
       <section class="app-modal image-modal">
-        <header class="modal-header-row">
-          <div>
-            <h2 class="modal-title">{{ imageModalRequest.title || imageModalImage?.name || "Images" }}</h2>
-            <p class="modal-subtitle">{{ imageModalRequest.threadName }}</p>
-          </div>
-          <button class="icon-button" type="button" aria-label="Close images" @click="closeImageModal">
-            <i class="bi bi-x-lg" aria-hidden="true"></i>
-          </button>
-        </header>
-
         <div class="image-stage">
           <img
             v-if="imageModalImage"
@@ -1742,26 +1764,43 @@ function releaseOverlayPtt(): void {
           />
         </div>
 
-        <div class="image-modal-footer">
+        <header class="image-modal-topbar">
+          <div class="image-modal-meta">
+            <h2 class="modal-title">{{ imageModalRequest.title || imageModalImage?.name || "Images" }}</h2>
+            <p class="modal-subtitle">{{ imageModalRequest.threadName }}</p>
+          </div>
           <button
-            class="btn btn-outline-light btn-sm"
+            class="image-overlay-button"
             type="button"
-            :disabled="imageModalIndex <= 0"
-            @click="selectImageModalIndex(imageModalIndex - 1)"
+            aria-label="Close images"
+            @click="closeImageModal"
           >
-            <i class="bi bi-chevron-left" aria-hidden="true"></i>
-            Previous
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
           </button>
-          <span>{{ imageModalIndex + 1 }} / {{ imageModalRequest.images.length }}</span>
-          <button
-            class="btn btn-outline-light btn-sm"
-            type="button"
-            :disabled="imageModalIndex >= imageModalRequest.images.length - 1"
-            @click="selectImageModalIndex(imageModalIndex + 1)"
-          >
-            Next
-            <i class="bi bi-chevron-right" aria-hidden="true"></i>
-          </button>
+        </header>
+
+        <button
+          class="image-nav-button image-nav-previous"
+          type="button"
+          aria-label="Previous image"
+          :disabled="imageModalIndex <= 0"
+          @click="selectImageModalIndex(imageModalIndex - 1)"
+        >
+          <i class="bi bi-chevron-left" aria-hidden="true"></i>
+        </button>
+
+        <button
+          class="image-nav-button image-nav-next"
+          type="button"
+          aria-label="Next image"
+          :disabled="imageModalIndex >= imageModalRequest.images.length - 1"
+          @click="selectImageModalIndex(imageModalIndex + 1)"
+        >
+          <i class="bi bi-chevron-right" aria-hidden="true"></i>
+        </button>
+
+        <div class="image-modal-status">
+          {{ imageModalIndex + 1 }} / {{ imageModalRequest.images.length }}
         </div>
 
         <p v-if="imageModalRequest.caption" class="image-caption">
@@ -1853,7 +1892,7 @@ function releaseOverlayPtt(): void {
 
     <div v-if="errorMessage" class="toast-error alert alert-danger">
       {{ errorMessage }}
-      <button class="btn-close" type="button" aria-label="Close" @click="errorMessage = ''"></button>
+      <button class="btn-close" type="button" aria-label="Close" @click="dismissErrorMessage"></button>
     </div>
   </main>
 </template>
